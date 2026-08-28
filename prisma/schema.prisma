@@ -1,0 +1,237 @@
+// Prisma schema for the Multi-Business Accounting Tool
+// See ../../Assest and doc/Accounting-Tool-Project-Plan.docx for the full plan.
+// Ledger data is modeled as double-entry (Transaction -> Line[]) from day one,
+// even though Phase 1's UI only shows a simple money-in/money-out list.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+enum LineDirection {
+  DEBIT
+  CREDIT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum StorageProvider {
+  LOCAL
+  DRIVE
+}
+
+enum AccessScope {
+  BUSINESS
+  TABLE
+}
+
+enum AccessPermission {
+  VIEW
+  EDIT
+}
+
+// A person who can log in. Stage 1: email + password. Stage 2 adds Google login.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String? // Stage 1 (bcrypt). Nullable once Stage 2 Google-only accounts exist.
+  googleId     String?  @unique // Stage 2
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  businesses    Business[]    @relation("BusinessOwner")
+  accessGrants  AccessGrant[] @relation("Grantee")
+
+  @@map("users")
+}
+
+// One of the client's companies (SAMTrek, Vaaii, Shopnojhuri, ...).
+// Also carries the sender profile shown on generated invoices.
+model Business {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
+
+  name     String
+  currency String @default("BDT")
+
+  // Invoice sender profile (Section 4 of the invoice template mapping).
+  logoUrl        String?
+  address        String? @db.Text
+  contactEmail   String?
+  website        String?
+  bankAccountName   String?
+  bankAccountNumber String?
+  bankRoutingNumber String?
+  bankSwiftCode     String?
+  bankBranch        String?
+  defaultTerms      String? @db.Text // default Terms & Conditions text, overridable per invoice
+
+  driveFolderId String? // set once Stage 2 (Google Drive) is live
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categories    Category[]
+  transactions  Transaction[]
+  clients       Client[]
+  invoices      Invoice[]
+  documents     Document[]
+  accessGrants  AccessGrant[]
+
+  @@map("businesses")
+}
+
+// A saved bill-to party for a business, reused across invoices.
+model Client {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name    String
+  address String  @db.Text
+  email   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices Invoice[]
+
+  @@map("clients")
+}
+
+// Income/expense grouping, editable per business.
+model Category {
+  id         String       @id @default(cuid())
+  businessId String
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  type       CategoryType
+
+  createdAt DateTime @default(now())
+
+  lines Line[]
+
+  @@map("categories")
+}
+
+// A ledger entry. Phase 1's UI shows this as a single money-in/money-out row;
+// underneath it is a debit/credit pair of Lines, so full double-entry views
+// (Phase 3) don't require a schema rewrite.
+model Transaction {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  date       DateTime
+  memo       String?
+
+  createdAt DateTime @default(now())
+
+  lines Line[]
+
+  @@map("transactions")
+}
+
+model Line {
+  id            String        @id @default(cuid())
+  transactionId String
+  transaction   Transaction   @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  categoryId    String?
+  category      Category?     @relation(fields: [categoryId], references: [id])
+  amount        Decimal       @db.Decimal(14, 2)
+  direction     LineDirection
+
+  @@map("lines")
+}
+
+// A generated invoice.
+model Invoice {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+
+  number  String // sequential per business, e.g. shown as "#20260812"
+  issueDate DateTime
+  terms     String // e.g. "Due end of the month"
+  dueDate   DateTime
+
+  subTotal Decimal       @db.Decimal(14, 2)
+  total    Decimal       @db.Decimal(14, 2)
+  status   InvoiceStatus @default(DRAFT)
+
+  fileReference String? // path (Stage 1 local disk) or Drive file id (Stage 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items InvoiceItem[]
+
+  @@unique([businessId, number])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  position    Int
+  description String  @db.Text
+  quantity    Decimal @db.Decimal(10, 2)
+  rate        Decimal @db.Decimal(14, 2)
+  amount      Decimal @db.Decimal(14, 2)
+
+  @@map("invoice_items")
+}
+
+// Any stored file (invoice PDFs, receipts, etc.).
+model Document {
+  id         String          @id @default(cuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type       String
+  storageProvider StorageProvider @default(LOCAL)
+  fileReference   String
+
+  createdAt DateTime @default(now())
+
+  @@map("documents")
+}
+
+// A sharing permission: the owner grants another user time-limited,
+// scoped access to a whole business or a single table.
+model AccessGrant {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  granteeId  String
+  grantee    User     @relation("Grantee", fields: [granteeId], references: [id])
+
+  scope      AccessScope
+  tableName  String? // only set when scope = TABLE
+  permission AccessPermission
+
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@map("access_grants")
+}
