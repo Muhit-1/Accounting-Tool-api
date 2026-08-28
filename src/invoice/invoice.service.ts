@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { BusinessService } from '../business/business.service.js';
 import { ClientService } from '../client/client.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { InvoiceStatus } from '../generated/prisma/client.js';
+import { AccessPermission, InvoiceStatus } from '../generated/prisma/client.js';
 import { CreateInvoiceDto } from './dto/create-invoice.dto.js';
 import { InvoicePdfService } from './pdf/invoice-pdf.service.js';
 import { InvoiceStorageService } from './pdf/invoice-storage.service.js';
@@ -26,9 +26,20 @@ export class InvoiceService {
     return String(1001 + count);
   }
 
-  async create(ownerId: string, businessId: string, dto: CreateInvoiceDto) {
-    const business = await this.businessService.findOneForOwner(ownerId, businessId);
-    const client = await this.clientService.findOneForBusiness(ownerId, businessId, dto.clientId);
+  private async findInvoiceInBusiness(businessId: string, id: string, include?: object) {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include });
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+    if (invoice.businessId !== businessId) {
+      throw new ForbiddenException('This invoice does not belong to that business');
+    }
+    return invoice;
+  }
+
+  async create(userId: string, businessId: string, dto: CreateInvoiceDto) {
+    const business = await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    const client = await this.clientService.findOneForBusiness(userId, businessId, dto.clientId);
 
     const items = dto.items.map((item) => ({
       description: item.description,
@@ -94,8 +105,8 @@ export class InvoiceService {
     });
   }
 
-  async findAllForBusiness(ownerId: string, businessId: string) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async findAllForBusiness(userId: string, businessId: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
     return this.prisma.invoice.findMany({
       where: { businessId },
       orderBy: { issueDate: 'desc' },
@@ -103,28 +114,20 @@ export class InvoiceService {
     });
   }
 
-  async findOneForBusiness(ownerId: string, businessId: string, id: string) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id },
-      include: { items: true, client: true },
-    });
-    if (!invoice) {
-      throw new NotFoundException('Invoice not found');
-    }
-    if (invoice.businessId !== businessId) {
-      throw new ForbiddenException('This invoice does not belong to that business');
-    }
-    return invoice;
+  async findOneForBusiness(userId: string, businessId: string, id: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
+    return this.findInvoiceInBusiness(businessId, id, { items: true, client: true });
   }
 
-  async updateStatus(ownerId: string, businessId: string, id: string, status: InvoiceStatus) {
-    await this.findOneForBusiness(ownerId, businessId, id);
+  async updateStatus(userId: string, businessId: string, id: string, status: InvoiceStatus) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    await this.findInvoiceInBusiness(businessId, id);
     return this.prisma.invoice.update({ where: { id }, data: { status } });
   }
 
-  async remove(ownerId: string, businessId: string, id: string) {
-    const invoice = await this.findOneForBusiness(ownerId, businessId, id);
+  async remove(userId: string, businessId: string, id: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    const invoice = await this.findInvoiceInBusiness(businessId, id);
     if (invoice.fileReference) {
       await this.storageService.remove(invoice.fileReference);
     }
@@ -132,8 +135,9 @@ export class InvoiceService {
     return { id };
   }
 
-  async getPdf(ownerId: string, businessId: string, id: string): Promise<{ buffer: Buffer; filename: string }> {
-    const invoice = await this.findOneForBusiness(ownerId, businessId, id);
+  async getPdf(userId: string, businessId: string, id: string): Promise<{ buffer: Buffer; filename: string }> {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
+    const invoice = await this.findInvoiceInBusiness(businessId, id);
     if (!invoice.fileReference) {
       throw new NotFoundException('This invoice has no generated PDF');
     }

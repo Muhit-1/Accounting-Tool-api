@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { CategoryType, LineDirection } from '../generated/prisma/client.js';
+import { AccessPermission, CategoryType, LineDirection } from '../generated/prisma/client.js';
 import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
 
@@ -55,8 +55,8 @@ export class TransactionService {
     }
   }
 
-  async create(ownerId: string, businessId: string, dto: CreateTransactionDto) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async create(userId: string, businessId: string, dto: CreateTransactionDto) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, dto.type);
     }
@@ -80,8 +80,8 @@ export class TransactionService {
     return toResponse(tx);
   }
 
-  async findAllForBusiness(ownerId: string, businessId: string) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async findAllForBusiness(userId: string, businessId: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
     const transactions = await this.prisma.transaction.findMany({
       where: { businessId },
       orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
@@ -96,8 +96,8 @@ export class TransactionService {
     });
   }
 
-  async findOneForBusiness(ownerId: string, businessId: string, id: string) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async findOneForBusiness(userId: string, businessId: string, id: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
     const tx = await this.prisma.transaction.findUnique({
       where: { id },
       include: { lines: { include: { category: true } } },
@@ -111,8 +111,8 @@ export class TransactionService {
     return toResponse(tx);
   }
 
-  async update(ownerId: string, businessId: string, id: string, dto: UpdateTransactionDto) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async update(userId: string, businessId: string, id: string, dto: UpdateTransactionDto) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const existing = await this.prisma.transaction.findUnique({
       where: { id },
       include: { lines: true },
@@ -152,14 +152,21 @@ export class TransactionService {
     return toResponse(tx);
   }
 
-  async remove(ownerId: string, businessId: string, id: string) {
-    await this.findOneForBusiness(ownerId, businessId, id);
+  async remove(userId: string, businessId: string, id: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    const tx = await this.prisma.transaction.findUnique({ where: { id } });
+    if (!tx) {
+      throw new NotFoundException('Transaction not found');
+    }
+    if (tx.businessId !== businessId) {
+      throw new ForbiddenException('This transaction does not belong to that business');
+    }
     await this.prisma.transaction.delete({ where: { id } });
     return { id };
   }
 
-  async getBalance(ownerId: string, businessId: string) {
-    await this.businessService.findOneForOwner(ownerId, businessId);
+  async getBalance(userId: string, businessId: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
     const lines = await this.prisma.line.findMany({
       where: { transaction: { businessId } },
     });

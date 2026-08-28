@@ -9,6 +9,8 @@ import { CategoryModule } from './category/category.module.js';
 import { TransactionModule } from './transaction/transaction.module.js';
 import { ClientModule } from './client/client.module.js';
 import { InvoiceModule } from './invoice/invoice.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+import { AccessGrantModule } from './access-grant/access-grant.module.js';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { InvoiceModule } from './invoice/invoice.module.js';
     TransactionModule,
     ClientModule,
     InvoiceModule,
+    DashboardModule,
+    AccessGrantModule,
   ],
   controllers: [AppController],
   providers: [AppService],
