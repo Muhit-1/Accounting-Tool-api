@@ -28,3 +28,6 @@ Thumbs.db
 prisma/migrations/dev.db
 
 /src/generated/prisma
+
+# Stage 1 local invoice PDF storage
+/storage/

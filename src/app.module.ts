@@ -7,6 +7,8 @@ import { AuthModule } from './auth/auth.module.js';
 import { BusinessModule } from './business/business.module.js';
 import { CategoryModule } from './category/category.module.js';
 import { TransactionModule } from './transaction/transaction.module.js';
+import { ClientModule } from './client/client.module.js';
+import { InvoiceModule } from './invoice/invoice.module.js';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { TransactionModule } from './transaction/transaction.module.js';
     BusinessModule,
     CategoryModule,
     TransactionModule,
+    ClientModule,
+    InvoiceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
