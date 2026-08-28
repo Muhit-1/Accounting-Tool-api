@@ -69,40 +69,49 @@ export class InvoiceService {
       include: { items: true },
     });
 
-    const pdf = await this.pdfService.render({
-      business: {
-        name: business.name,
-        logoUrl: business.logoUrl,
-        address: business.address,
-        contactEmail: business.contactEmail,
-        website: business.website,
-        currency: business.currency,
-        bankAccountName: business.bankAccountName,
-        bankAccountNumber: business.bankAccountNumber,
-        bankRoutingNumber: business.bankRoutingNumber,
-        bankSwiftCode: business.bankSwiftCode,
-        bankBranch: business.bankBranch,
-        defaultTerms: business.defaultTerms,
-      },
-      client: { name: client.name, address: client.address },
-      invoice: {
-        number: invoice.number,
-        issueDate: invoice.issueDate,
-        terms: invoice.terms,
-        dueDate: invoice.dueDate,
-        subTotal: Number(invoice.subTotal),
-        total: Number(invoice.total),
-      },
-      items: items.map((item) => ({ ...item })),
-    });
+    // PDF rendering/storage happens outside the DB write above (file I/O
+    // can't join a Prisma transaction). If either step fails, delete the
+    // just-created invoice rather than leaving a DRAFT row with no PDF
+    // behind — the caller sees one clean error instead of a ghost invoice.
+    try {
+      const pdf = await this.pdfService.render({
+        business: {
+          name: business.name,
+          logoUrl: business.logoUrl,
+          address: business.address,
+          contactEmail: business.contactEmail,
+          website: business.website,
+          currency: business.currency,
+          bankAccountName: business.bankAccountName,
+          bankAccountNumber: business.bankAccountNumber,
+          bankRoutingNumber: business.bankRoutingNumber,
+          bankSwiftCode: business.bankSwiftCode,
+          bankBranch: business.bankBranch,
+          defaultTerms: business.defaultTerms,
+        },
+        client: { name: client.name, address: client.address },
+        invoice: {
+          number: invoice.number,
+          issueDate: invoice.issueDate,
+          terms: invoice.terms,
+          dueDate: invoice.dueDate,
+          subTotal: Number(invoice.subTotal),
+          total: Number(invoice.total),
+        },
+        items: items.map((item) => ({ ...item })),
+      });
 
-    const fileReference = await this.storageService.save(businessId, invoice.id, pdf);
+      const fileReference = await this.storageService.save(businessId, invoice.id, pdf);
 
-    return this.prisma.invoice.update({
-      where: { id: invoice.id },
-      data: { fileReference },
-      include: { items: true },
-    });
+      return await this.prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { fileReference },
+        include: { items: true },
+      });
+    } catch (error) {
+      await this.prisma.invoice.delete({ where: { id: invoice.id } }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async findAllForBusiness(userId: string, businessId: string) {

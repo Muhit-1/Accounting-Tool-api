@@ -4,14 +4,10 @@ import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from './decorators/current-user.decorator.js';
-import { PrismaService } from '../prisma/prisma.service.js';
 
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('register')
   register(@Body() dto: RegisterDto) {
@@ -25,8 +21,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async me(@CurrentUser() user: AuthenticatedUser) {
-    const dbUser = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    return { id: dbUser.id, email: dbUser.email, name: dbUser.name };
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.getProfile(user.id);
   }
 }
