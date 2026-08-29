@@ -82,6 +82,7 @@ export class AccessGrantService {
       include: { business: { select: { id: true, name: true, currency: true } } },
     });
     return grants.map((grant) => ({
+      id: grant.id,
       business: grant.business,
       permission: grant.permission,
       expiresAt: grant.expiresAt,
