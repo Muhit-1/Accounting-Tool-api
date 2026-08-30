@@ -72,7 +72,7 @@ model Business {
   currency String @default("BDT")
 
   // Invoice sender profile (Section 4 of the invoice template mapping).
-  logoUrl        String?
+  logoUrl        String? @db.Text // may hold a base64 data URI for an uploaded logo
   address        String? @db.Text
   contactEmail   String?
   website        String?
@@ -90,12 +90,30 @@ model Business {
 
   categories    Category[]
   transactions  Transaction[]
+  ledgers       Ledger[]
   clients       Client[]
   invoices      Invoice[]
   documents     Document[]
   accessGrants  AccessGrant[]
 
   @@map("businesses")
+}
+
+// One of a venture's books — a venture can keep several (e.g. "Cash",
+// "Bank") and each has its own independent set of transactions.
+model Ledger {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@map("ledgers")
 }
 
 // A saved bill-to party for a business, reused across invoices.
@@ -138,6 +156,8 @@ model Transaction {
   id         String   @id @default(cuid())
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  ledgerId   String
+  ledger     Ledger   @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
   date       DateTime
   memo       String?
 

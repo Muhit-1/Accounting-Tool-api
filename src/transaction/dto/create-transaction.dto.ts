@@ -2,6 +2,9 @@ import { IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString } from
 import { CategoryType } from '../../generated/prisma/client.js';
 
 export class CreateTransactionDto {
+  @IsString()
+  ledgerId: string;
+
   @IsDateString()
   date: string;
 

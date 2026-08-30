@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
 import { TransactionService } from './transaction.service.js';
@@ -20,8 +20,12 @@ export class TransactionController {
   }
 
   @Get()
-  findAll(@CurrentUser() user: AuthenticatedUser, @Param('businessId') businessId: string) {
-    return this.transactionService.findAllForBusiness(user.id, businessId);
+  findAll(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('businessId') businessId: string,
+    @Query('ledgerId') ledgerId?: string,
+  ) {
+    return this.transactionService.findAllForBusiness(user.id, businessId, ledgerId);
   }
 
   @Get('balance')

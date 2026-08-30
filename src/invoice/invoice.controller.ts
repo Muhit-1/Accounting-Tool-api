@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
 import { InvoiceService } from './invoice.service.js';
 import { CreateInvoiceDto } from './dto/create-invoice.dto.js';
+import { UpdateInvoiceDto } from './dto/update-invoice.dto.js';
 import { UpdateInvoiceStatusDto } from './dto/update-invoice-status.dto.js';
 
 @UseGuards(JwtAuthGuard)
@@ -22,6 +23,12 @@ export class InvoiceController {
   @Get()
   findAll(@CurrentUser() user: AuthenticatedUser, @Param('businessId') businessId: string) {
     return this.invoiceService.findAllForBusiness(user.id, businessId);
+  }
+
+  // Must come before ':id' so "next-number" isn't parsed as an invoice id.
+  @Get('next-number')
+  previewNextNumber(@CurrentUser() user: AuthenticatedUser, @Param('businessId') businessId: string) {
+    return this.invoiceService.previewNextNumber(user.id, businessId);
   }
 
   @Get(':id')
@@ -44,6 +51,16 @@ export class InvoiceController {
       type: 'application/pdf',
       disposition: `attachment; filename="${filename}"`,
     });
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('businessId') businessId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateInvoiceDto,
+  ) {
+    return this.invoiceService.update(user.id, businessId, id, dto);
   }
 
   @Patch(':id/status')

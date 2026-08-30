@@ -19,6 +19,7 @@ function typeForDirection(direction: LineDirection): CategoryType {
 
 function toResponse(tx: {
   id: string;
+  ledgerId: string;
   date: Date;
   memo: string | null;
   createdAt: Date;
@@ -27,6 +28,7 @@ function toResponse(tx: {
   const line = tx.lines[0];
   return {
     id: tx.id,
+    ledgerId: tx.ledgerId,
     date: tx.date,
     memo: tx.memo,
     amount: line ? Number(line.amount) : 0,
@@ -55,8 +57,16 @@ export class TransactionService {
     }
   }
 
+  private async assertLedgerBelongsToBusiness(businessId: string, ledgerId: string) {
+    const ledger = await this.prisma.ledger.findUnique({ where: { id: ledgerId } });
+    if (!ledger || ledger.businessId !== businessId) {
+      throw new BadRequestException('Ledger does not belong to this business');
+    }
+  }
+
   async create(userId: string, businessId: string, dto: CreateTransactionDto) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    await this.assertLedgerBelongsToBusiness(businessId, dto.ledgerId);
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, dto.type);
     }
@@ -64,6 +74,7 @@ export class TransactionService {
     const tx = await this.prisma.transaction.create({
       data: {
         businessId,
+        ledgerId: dto.ledgerId,
         date: new Date(dto.date),
         memo: dto.memo,
         lines: {
@@ -80,10 +91,13 @@ export class TransactionService {
     return toResponse(tx);
   }
 
-  async findAllForBusiness(userId: string, businessId: string) {
+  async findAllForBusiness(userId: string, businessId: string, ledgerId?: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
+    if (ledgerId) {
+      await this.assertLedgerBelongsToBusiness(businessId, ledgerId);
+    }
     const transactions = await this.prisma.transaction.findMany({
-      where: { businessId },
+      where: ledgerId ? { businessId, ledgerId } : { businessId },
       orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
       include: { lines: { include: { category: true } } },
     });
@@ -129,10 +143,14 @@ export class TransactionService {
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, nextType);
     }
+    if (dto.ledgerId) {
+      await this.assertLedgerBelongsToBusiness(businessId, dto.ledgerId);
+    }
 
     const tx = await this.prisma.transaction.update({
       where: { id },
       data: {
+        ledgerId: dto.ledgerId,
         date: dto.date ? new Date(dto.date) : undefined,
         memo: dto.memo,
         lines: {

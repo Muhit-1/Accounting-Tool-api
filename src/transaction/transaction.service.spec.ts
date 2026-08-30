@@ -6,6 +6,7 @@ function createPrismaMock() {
   return {
     transaction: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     category: { findUnique: vi.fn() },
+    ledger: { findUnique: vi.fn().mockResolvedValue({ id: 'ledger1', businessId: 'biz1' }) },
     line: { findMany: vi.fn() },
   };
 }
@@ -36,6 +37,7 @@ describe('TransactionService', () => {
 
       await expect(
         service.create('user1', 'biz1', {
+          ledgerId: 'ledger1',
           date: '2026-01-01',
           amount: 10,
           type: CategoryType.INCOME,
@@ -55,6 +57,7 @@ describe('TransactionService', () => {
 
       await expect(
         service.create('user1', 'biz1', {
+          ledgerId: 'ledger1',
           date: '2026-01-01',
           amount: 10,
           type: CategoryType.INCOME,
@@ -72,7 +75,12 @@ describe('TransactionService', () => {
         lines: [{ amount: 100, direction: LineDirection.CREDIT, categoryId: null, category: null }],
       });
 
-      await service.create('user1', 'biz1', { date: '2026-01-01', amount: 100, type: CategoryType.INCOME });
+      await service.create('user1', 'biz1', {
+        ledgerId: 'ledger1',
+        date: '2026-01-01',
+        amount: 100,
+        type: CategoryType.INCOME,
+      });
 
       const createArgs = prisma.transaction.create.mock.calls[0][0];
       expect(createArgs.data.lines.create.direction).toBe(LineDirection.CREDIT);
