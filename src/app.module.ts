@@ -10,6 +10,7 @@ import { LedgerModule } from './ledger/ledger.module.js';
 import { TransactionModule } from './transaction/transaction.module.js';
 import { ClientModule } from './client/client.module.js';
 import { InvoiceModule } from './invoice/invoice.module.js';
+import { InvoiceScanModule } from './invoice-scan/invoice-scan.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessGrantModule } from './access-grant/access-grant.module.js';
 
@@ -27,6 +28,7 @@ import { AccessGrantModule } from './access-grant/access-grant.module.js';
     TransactionModule,
     ClientModule,
     InvoiceModule,
+    InvoiceScanModule,
     DashboardModule,
     AccessGrantModule,
   ],
