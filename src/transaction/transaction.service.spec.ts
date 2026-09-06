@@ -15,6 +15,10 @@ function createBusinessServiceMock() {
   return { assertAccess: vi.fn().mockResolvedValue({ id: 'biz1' }) };
 }
 
+function createReceiptStorageMock() {
+  return { save: vi.fn(), read: vi.fn(), remove: vi.fn() };
+}
+
 describe('TransactionService', () => {
   let service: TransactionService;
   let prisma: ReturnType<typeof createPrismaMock>;
@@ -23,7 +27,7 @@ describe('TransactionService', () => {
   beforeEach(() => {
     prisma = createPrismaMock();
     businessService = createBusinessServiceMock();
-    service = new TransactionService(prisma as never, businessService as never);
+    service = new TransactionService(prisma as never, businessService as never, createReceiptStorageMock() as never);
   });
 
   describe('create', () => {

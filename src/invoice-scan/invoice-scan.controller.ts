@@ -5,8 +5,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
 import { InvoiceScanService } from './invoice-scan.service.js';
 
-const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
 @UseGuards(JwtAuthGuard)
 @Controller('businesses/:businessId/ledgers/:ledgerId/scan')
@@ -25,8 +25,8 @@ export class InvoiceScanController {
       throw new BadRequestException('No file uploaded');
     }
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
-      throw new BadRequestException('Please upload a JPG, PNG, or WEBP photo of the invoice');
+      throw new BadRequestException('Please upload a PDF, JPG, PNG, or WEBP of the invoice');
     }
-    return this.invoiceScanService.scan(user.id, businessId, ledgerId, file.buffer);
+    return this.invoiceScanService.scan(user.id, businessId, ledgerId, file.buffer, file.mimetype);
   }
 }

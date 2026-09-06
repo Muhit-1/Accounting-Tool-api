@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, CategoryType, LineDirection } from '../generated/prisma/client.js';
 import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
+import { ReceiptStorageService } from './receipt-storage.service.js';
+
+const ALLOWED_RECEIPT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
 
 // Phase 1 stores one Line per Transaction (money-in/money-out), not a
 // balanced debit/credit pair — see prisma/schema.prisma. INCOME entries are
@@ -22,6 +26,8 @@ function toResponse(tx: {
   ledgerId: string;
   date: Date;
   memo: string | null;
+  counterparty: string | null;
+  receiptFileName: string | null;
   createdAt: Date;
   lines: { amount: unknown; direction: LineDirection; categoryId: string | null; category: { id: string; name: string } | null }[];
 }) {
@@ -31,6 +37,8 @@ function toResponse(tx: {
     ledgerId: tx.ledgerId,
     date: tx.date,
     memo: tx.memo,
+    counterparty: tx.counterparty,
+    receiptFileName: tx.receiptFileName,
     amount: line ? Number(line.amount) : 0,
     type: line ? typeForDirection(line.direction) : null,
     category: line?.category ?? null,
@@ -43,7 +51,19 @@ export class TransactionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly businessService: BusinessService,
+    private readonly receiptStorage: ReceiptStorageService,
   ) {}
+
+  private async findTransactionInBusiness(businessId: string, id: string) {
+    const tx = await this.prisma.transaction.findUnique({ where: { id } });
+    if (!tx) {
+      throw new NotFoundException('Transaction not found');
+    }
+    if (tx.businessId !== businessId) {
+      throw new ForbiddenException('This transaction does not belong to that business');
+    }
+    return tx;
+  }
 
   private async assertCategoryBelongsToBusiness(businessId: string, categoryId: string, type: CategoryType) {
     const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
@@ -77,6 +97,7 @@ export class TransactionService {
         ledgerId: dto.ledgerId,
         date: new Date(dto.date),
         memo: dto.memo,
+        counterparty: dto.counterparty,
         lines: {
           create: {
             amount: dto.amount,
@@ -153,6 +174,7 @@ export class TransactionService {
         ledgerId: dto.ledgerId,
         date: dto.date ? new Date(dto.date) : undefined,
         memo: dto.memo,
+        counterparty: dto.counterparty,
         lines: {
           update: {
             where: { id: line.id },
@@ -172,15 +194,62 @@ export class TransactionService {
 
   async remove(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    const tx = await this.prisma.transaction.findUnique({ where: { id } });
-    if (!tx) {
-      throw new NotFoundException('Transaction not found');
-    }
-    if (tx.businessId !== businessId) {
-      throw new ForbiddenException('This transaction does not belong to that business');
+    const tx = await this.findTransactionInBusiness(businessId, id);
+    if (tx.receiptFileReference) {
+      await this.receiptStorage.remove(tx.receiptFileReference);
     }
     await this.prisma.transaction.delete({ where: { id } });
     return { id };
+  }
+
+  // Attaches the invoice/receipt file the user uploaded when creating this
+  // entry via "Upload invoice" — a separate step from create() so the main
+  // create-transaction endpoint stays plain JSON; the file only needs to
+  // exist once the entry itself is confirmed and saved.
+  async attachReceipt(
+    userId: string,
+    businessId: string,
+    id: string,
+    file: { mimetype: string; size: number; originalname: string; buffer: Buffer } | undefined,
+  ) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    const tx = await this.findTransactionInBusiness(businessId, id);
+
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    if (!ALLOWED_RECEIPT_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException('Please upload a PDF, JPG, PNG, or WEBP of the invoice');
+    }
+    if (file.size > MAX_RECEIPT_BYTES) {
+      throw new BadRequestException('That file is too large');
+    }
+
+    if (tx.receiptFileReference) {
+      await this.receiptStorage.remove(tx.receiptFileReference);
+    }
+    const fileReference = await this.receiptStorage.save(businessId, id, file.mimetype, file.buffer);
+
+    const updated = await this.prisma.transaction.update({
+      where: { id },
+      data: {
+        receiptFileReference: fileReference,
+        receiptFileName: file.originalname,
+        receiptMimeType: file.mimetype,
+      },
+      include: { lines: { include: { category: true } } },
+    });
+    return toResponse(updated);
+  }
+
+  async getReceipt(userId: string, businessId: string, id: string): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
+    const tx = await this.findTransactionInBusiness(businessId, id);
+    if (!tx.receiptFileReference || !tx.receiptFileName || !tx.receiptMimeType) {
+      throw new NotFoundException('This entry has no uploaded invoice');
+    }
+    const buffer = await this.receiptStorage.read(tx.receiptFileReference);
+    return { buffer, filename: tx.receiptFileName, mimeType: tx.receiptMimeType };
   }
 
   async getBalance(userId: string, businessId: string) {

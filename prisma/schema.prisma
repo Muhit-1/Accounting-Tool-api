@@ -160,6 +160,17 @@ model Transaction {
   ledger     Ledger   @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
   date       DateTime
   memo       String?
+  // Who the money moved with — the vendor on a bill you paid (EXPENSE) or
+  // the client who paid you (INCOME). Free text, usually prefilled from a
+  // scanned/uploaded invoice (see InvoiceScanService.extractCounterparty).
+  counterparty String?
+
+  // The source document (invoice/receipt) the user uploaded when creating
+  // this entry via "Upload invoice" — kept so they can open it again later.
+  // All three are set together or not at all.
+  receiptFileReference String? // path on disk (Stage 1 local storage)
+  receiptFileName       String? // original filename, for a friendly download name
+  receiptMimeType       String?
 
   createdAt DateTime @default(now())
 

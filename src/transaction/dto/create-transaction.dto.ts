@@ -12,6 +12,12 @@ export class CreateTransactionDto {
   @IsString()
   memo?: string;
 
+  // Vendor you paid (EXPENSE) or client who paid you (INCOME) — usually
+  // prefilled from a scanned/uploaded invoice.
+  @IsOptional()
+  @IsString()
+  counterparty?: string;
+
   @IsOptional()
   @IsString()
   categoryId?: string;
