@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { isSafeId } from '../../common/safe-id.js';
 
 // Stage 1: invoice PDFs live on local disk under INVOICE_STORAGE_DIR,
 // one subfolder per business. Stage 2 replaces this with Google Drive,
@@ -15,6 +16,12 @@ export class InvoiceStorageService {
   }
 
   private pathFor(businessId: string, invoiceId: string): string {
+    if (!isSafeId(businessId) || !isSafeId(invoiceId)) {
+      // Callers only ever pass IDs that already passed a DB ownership
+      // check, so this is a "this should be impossible" guard, not an
+      // expected user-facing error.
+      throw new InternalServerErrorException('Invalid identifier for file storage');
+    }
     return join(this.baseDir, businessId, `${invoiceId}.pdf`);
   }
 

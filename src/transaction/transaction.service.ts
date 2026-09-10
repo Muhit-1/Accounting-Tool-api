@@ -5,6 +5,7 @@ import { AccessPermission, CategoryType, LineDirection } from '../generated/pris
 import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
 import { ReceiptStorageService } from './receipt-storage.service.js';
+import { matchesFileSignature } from '../common/file-signature.js';
 
 const ALLOWED_RECEIPT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
@@ -223,6 +224,9 @@ export class TransactionService {
     }
     if (file.size > MAX_RECEIPT_BYTES) {
       throw new BadRequestException('That file is too large');
+    }
+    if (!matchesFileSignature(file.buffer, file.mimetype)) {
+      throw new BadRequestException("That file's contents don't match a PDF, JPG, PNG, or WEBP");
     }
 
     if (tx.receiptFileReference) {

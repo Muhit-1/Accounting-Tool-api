@@ -208,14 +208,25 @@ export class InvoiceScanService {
     return ocrText;
   }
 
+  // A file passing the earlier magic-byte check only proves it *starts*
+  // like a real PDF/image — pdfjs-dist (and, in principle, Tesseract) can
+  // still choke on a truncated or otherwise malformed file past that point.
+  // Surface that as a normal 400 instead of an unhandled 500.
+  private async extractText(buffer: Buffer, mimetype: string): Promise<string> {
+    try {
+      return mimetype === 'application/pdf'
+        ? await this.extractPdfText(buffer)
+        : (await Tesseract.recognize(buffer, 'eng')).data.text;
+    } catch {
+      throw new BadRequestException("Couldn't read that file — it may be corrupted or an unsupported format");
+    }
+  }
+
   async scan(userId: string, businessId: string, ledgerId: string, buffer: Buffer, mimetype: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     await this.assertLedgerBelongsToBusiness(businessId, ledgerId);
 
-    const text =
-      mimetype === 'application/pdf'
-        ? await this.extractPdfText(buffer)
-        : (await Tesseract.recognize(buffer, 'eng')).data.text;
+    const text = await this.extractText(buffer, mimetype);
 
     const dateResult = parseInvoiceDate(text);
     return {

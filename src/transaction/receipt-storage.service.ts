@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { isSafeId } from '../common/safe-id.js';
 
 const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   'application/pdf': 'pdf',
@@ -22,6 +23,9 @@ export class ReceiptStorageService {
   }
 
   private pathFor(businessId: string, transactionId: string, mimeType: string): string {
+    if (!isSafeId(businessId) || !isSafeId(transactionId)) {
+      throw new InternalServerErrorException('Invalid identifier for file storage');
+    }
     const extension = EXTENSION_BY_MIME_TYPE[mimeType] ?? 'bin';
     return join(this.baseDir, businessId, `${transactionId}.${extension}`);
   }

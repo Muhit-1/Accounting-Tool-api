@@ -9,6 +9,16 @@ function createPrismaMock() {
   };
 }
 
+// Passthrough — these tests aren't exercising encryption itself (see
+// encryption.service.spec.ts for that), just that assertAccess still
+// returns the business it looked up.
+function createEncryptionServiceMock() {
+  return {
+    encrypt: vi.fn((value: string | null | undefined) => value ?? null),
+    decrypt: vi.fn((value: string | null | undefined) => value ?? null),
+  };
+}
+
 describe('BusinessService.assertAccess', () => {
   let service: BusinessService;
   let prisma: ReturnType<typeof createPrismaMock>;
@@ -17,7 +27,7 @@ describe('BusinessService.assertAccess', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new BusinessService(prisma as never);
+    service = new BusinessService(prisma as never, createEncryptionServiceMock() as never);
   });
 
   it('allows the owner full access without checking grants at all', async () => {
@@ -25,7 +35,7 @@ describe('BusinessService.assertAccess', () => {
 
     const result = await service.assertAccess('owner1', 'biz1', AccessPermission.EDIT);
 
-    expect(result).toBe(business);
+    expect(result).toMatchObject(business);
     expect(prisma.accessGrant.findFirst).not.toHaveBeenCalled();
   });
 
@@ -41,7 +51,7 @@ describe('BusinessService.assertAccess', () => {
 
     const result = await service.assertAccess('grantee1', 'biz1', AccessPermission.VIEW);
 
-    expect(result).toBe(business);
+    expect(result).toMatchObject(business);
   });
 
   it('rejects a VIEW-only grantee attempting an EDIT action', async () => {
