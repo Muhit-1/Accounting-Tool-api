@@ -13,12 +13,14 @@ Full project background lives in `../Assest and doc/Accounting-Tool-Project-Plan
 | ORM / DB | Prisma 7 (pinned — `latest` on npm is currently a pre-release) + MySQL/MariaDB, via `@prisma/adapter-mariadb` |
 | Auth | Stage 1: email/password (bcrypt + JWT). Stage 2 (later): adds Google OAuth |
 | File storage | Stage 1: local disk. Stage 2 (later): Google Drive API |
-| PDF generation | Puppeteer (headless Chromium) |
+| PDF generation | Puppeteer (headless Chromium) — invoices and date-range reports |
+| Invoice scanning | `pdfjs-dist` (text extraction) + `@napi-rs/canvas` + `tesseract.js` (OCR fallback for scanned/image invoices) + `chrono-node` (date parsing) |
+| Security | `helmet`, AES-256-GCM field encryption (Node `crypto`), a custom in-memory rate limiter, magic-byte file-signature checks |
 | Testing | Vitest |
 
 ## Project status
 
-All Phase 1 MVP milestones from the plan are implemented and manually + unit tested: auth, business management, categorized bookkeeping, invoicing with PDF generation, cost-tracking dashboards, and sharing/access control. Stage 2 (Google OAuth + Drive) and deployment are intentionally not started — see "What's not built yet" below.
+All Phase 1 MVP milestones from the plan are implemented and manually + unit tested: auth, business management, categorized bookkeeping with multi-ledger support, invoicing with PDF generation and editing, invoice upload/scan-to-prefill, date-range reporting, cost-tracking dashboards, and sharing/access control. An API-wide security hardening pass (validation, rate limiting, encryption at rest, file-upload verification) is also in place — see "Security" below. Stage 2 (Google OAuth + Drive) and deployment are intentionally not started — see "What's not built yet" below.
 
 ## Setup
 
@@ -42,14 +44,22 @@ Server listens on `http://localhost:3000` by default (`PORT` in `.env`).
 | `DATABASE_URL` | MySQL/MariaDB connection string, e.g. `mysql://root:password@localhost:3306/accounting_tool` |
 | `PORT` | HTTP port (default `3000`) |
 | `NODE_ENV` | `development` / `production` |
-| `JWT_SECRET` | Signs login session tokens. Generate a real random value — see below. Never commit this. |
+| `JWT_SECRET` | Signs login session tokens. Must be at least 32 characters — the app refuses to start otherwise. Never commit this. |
 | `JWT_EXPIRES_IN` | JWT lifetime, e.g. `1d` |
+| `ENCRYPTION_KEY` | Base64-encoded 32-byte key used to encrypt sensitive fields (business bank details) at rest. Must decode to exactly 32 bytes — the app refuses to start otherwise. Never commit this. |
 | `INVOICE_STORAGE_DIR` | Where generated invoice PDFs are saved (Stage 1 local disk), e.g. `./storage/invoices` |
+| `RECEIPT_STORAGE_DIR` | Where uploaded invoice/receipt files are saved so they can be reopened later, e.g. `./storage/receipts` |
+| `CORS_ORIGIN` | Comma-separated list of allowed frontend origins, e.g. `http://localhost:5173` |
 | `PUPPETEER_CACHE_DIR` | Only needed if Puppeteer's Chromium was installed to a non-default cache directory |
 
 Generate a `JWT_SECRET`:
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+Generate an `ENCRYPTION_KEY`:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
 ## Scripts
@@ -74,11 +84,23 @@ auth/           Stage 1 email/password login, JWT issuing/verification
 business/       Business CRUD + assertAccess() — the shared authorization check
                 (owner, or an active AccessGrant) used by every module below
 category/       Income/expense categories, per business
-transaction/    Bookkeeping entries (money-in/money-out), running balance
+ledger/         Ledgers within a business — a business can have multiple
+transaction/    Bookkeeping entries (money-in/money-out) per ledger, running
+                balance, counterparty (who the money moved with), and the
+                original uploaded receipt/invoice file
 client/         Bill To records (invoice recipients), per business
-invoice/        Invoice creation, PDF rendering (pdf/), local disk storage
+invoice/        Invoice creation/editing, PDF rendering (pdf/), local disk
+                storage
+invoice-scan/   "Upload invoice" — extracts amount/date/counterparty from an
+                uploaded PDF or image to prefill a transaction
+report/         Date-range reports, per business (+ optional ledger filter)
+                or combined across every owned business; on-screen JSON and
+                PDF export
 dashboard/      Per-business and combined cost-tracking summaries
 access-grant/   Sharing: grant/revoke time-limited business access
+encryption/     AES-256-GCM encryption for sensitive fields at rest
+common/         Cross-cutting security helpers: rate limiting, file-signature
+                verification, safe-id checks for on-disk paths
 prisma/         PrismaService — the only thing that talks to the database
 generated/      Prisma client output (gitignored, regenerated by `prisma generate`)
 ```
@@ -88,11 +110,12 @@ generated/      Prisma client output (gitignored, regenerated by `prisma generat
 The ledger is modeled as double-entry-ready from day one (`Transaction` → `Line[]`), even though Phase 1's UI only shows a simple money-in/money-out list — see `prisma/schema.prisma` for the full schema and comments. Core entities:
 
 - **User** — login identity (email/password now, `google_id` reserved for Stage 2)
-- **Business** — one of the owner's companies; also carries the invoice sender profile (logo, address, contact info, payment details, default terms)
+- **Business** — one of the owner's companies; carries its `currency` (`BDT`/`EUR`/`USD`/`CNY`) and the invoice sender profile (logo, address, contact info, bank details — encrypted at rest, see "Security" — and default terms)
+- **Ledger** — a book of transactions within a business; a business can have several (e.g. separate cash vs. bank ledgers), each independently deletable
 - **Client** — a saved Bill To record, reusable across a business's invoices
 - **Category** — income/expense grouping, per business
-- **Transaction** / **Line** — a ledger entry; Phase 1 stores one Line per Transaction (a CREDIT for income, a DEBIT for expense)
-- **Invoice** / **InvoiceItem** — a generated invoice and its line items
+- **Transaction** / **Line** — a ledger entry, scoped to a `Ledger`; Phase 1 stores one Line per Transaction (a CREDIT for income, a DEBIT for expense). Also carries an optional free-text `counterparty` (who the money moved with) and, when created via "Upload invoice," a reference to the original uploaded file so it can be reopened later
+- **Invoice** / **InvoiceItem** — a generated invoice and its line items; the invoice number and content are editable after creation
 - **Document** — any stored file reference (storage-provider aware: local now, Drive later)
 - **AccessGrant** — a sharing permission: business or table scope, view or edit, with an expiry and optional early revocation
 
@@ -127,6 +150,16 @@ All endpoints except `/auth/register` and `/auth/login` require `Authorization: 
 | PATCH | `/businesses/:id` | any subset of the create fields |
 | DELETE | `/businesses/:id` | — |
 
+### Ledgers (`/businesses/:businessId/ledgers`)
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `.../ledgers` | `{ name }` |
+| GET | `.../ledgers` | — |
+| GET | `.../ledgers/:id` | — |
+| PATCH | `.../ledgers/:id` | `{ name }` |
+| DELETE | `.../ledgers/:id` | Also deletes its transactions |
+
 ### Categories (`/businesses/:businessId/categories`)
 
 | Method | Path | Body |
@@ -141,12 +174,20 @@ All endpoints except `/auth/register` and `/auth/login` require `Authorization: 
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `.../transactions` | `{ date, memo?, categoryId?, amount (positive), type: "INCOME" \| "EXPENSE" }` — `categoryId`, if given, must belong to the business and match `type` |
-| GET | `.../transactions` | — returns entries in date order, each with a `runningBalance` |
+| POST | `.../transactions` | `{ ledgerId, date, memo?, counterparty?, categoryId?, amount (positive), type: "INCOME" \| "EXPENSE" }` — `categoryId`, if given, must belong to the business and match `type` |
+| GET | `.../transactions?ledgerId=` | — returns entries in date order, each with a `runningBalance`; `ledgerId` filters to one ledger |
 | GET | `.../transactions/balance` | — `{ totalIncome, totalExpense, balance }` |
 | GET | `.../transactions/:id` | — |
 | PATCH | `.../transactions/:id` | any subset of the create fields |
 | DELETE | `.../transactions/:id` | — |
+| POST | `.../transactions/:id/receipt` | multipart `file` (PDF/JPG/PNG/WEBP, ≤15MB) — attaches/replaces the transaction's source document |
+| GET | `.../transactions/:id/receipt` | — streams the originally uploaded file back |
+
+### Upload invoice / scan (`/businesses/:businessId/ledgers/:ledgerId/scan`)
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `.../scan` | multipart `file` (PDF preferred; JPG/PNG/WEBP also accepted, ≤15MB) — extracts amount, date, and counterparty from the document (PDF text layer first, OCR fallback for scans/images) to prefill a new transaction. Nothing is saved until the user submits the resulting transaction via the endpoint above. |
 
 ### Clients (`/businesses/:businessId/clients`)
 
@@ -176,6 +217,15 @@ All endpoints except `/auth/register` and `/auth/login` require `Authorization: 
 | GET | `/businesses/:businessId/dashboard` | `{ totalIncome, totalExpense, balance, byCategory: [...] }` for one business |
 | GET | `/dashboard` | Combined totals across every business you own, plus a per-business breakdown. Amounts are summed as-is, **not currency-converted** — multi-currency support is deferred (see below) |
 
+### Reports
+
+| Method | Path | Query | Notes |
+|---|---|---|---|
+| GET | `/businesses/:businessId/reports` | `from`, `to` (`YYYY-MM-DD`, required), `ledgerId?` | Totals, category breakdown, and the full transaction list for the date range, optionally narrowed to one ledger |
+| GET | `/businesses/:businessId/reports/pdf` | same | Same report as a downloadable PDF |
+| GET | `/reports` | `from`, `to` | Combined report across every business you own, with a per-business breakdown |
+| GET | `/reports/pdf` | same | Combined report as a downloadable PDF |
+
 ### Sharing (`/businesses/:businessId/access-grants`, `/shared-with-me`) — owner-only to manage
 
 | Method | Path | Body |
@@ -195,10 +245,22 @@ Unit tests currently cover the security- and correctness-critical logic: `Busine
 
 There's no seed script yet — create a user via `POST /auth/register` to get started.
 
+## Security
+
+A hardening pass covers the usual checklist for an API handling financial data:
+
+- **Encryption at rest** — `Business.bankAccountNumber`/`bankRoutingNumber`/`bankSwiftCode` are AES-256-GCM ciphertext in the database (`src/encryption/`). Encrypt/decrypt happens transparently inside `BusinessService`; the JSON contract to an authorized caller is unchanged. Requires `ENCRYPTION_KEY` (see above) — the app **refuses to start** without it, or without a sufficiently long `JWT_SECRET`.
+- **Rate limiting** — a global 100 requests/minute per client (`src/common/rate-limit.guard.ts`), tightened to 5/minute on `/auth/login` and `/auth/register` to blunt brute-force/credential-stuffing.
+- **Input validation** — a global `ValidationPipe` with `whitelist: true` and `forbidNonWhitelisted: true`: unknown fields are rejected outright, not silently dropped. Every DTO validates types, formats (e.g. `@IsDateString()` on report ranges), and required fields.
+- **File upload safety** — every upload endpoint (invoice scan, transaction receipts) checks the file's actual magic bytes against its claimed MIME type, on top of a MIME allowlist and a size limit — a spoofed `Content-Type` header alone can't get a file past the check.
+- **Security headers** — `helmet` is applied globally (with `crossOriginResourcePolicy` relaxed to `cross-origin` so the frontend's cross-origin `fetch()` for PDFs/receipts keeps working; CORS still restricts which origins may call the API at all, via `CORS_ORIGIN`).
+- **Path safety** — on-disk paths for stored invoices/receipts are built only from IDs that pass a strict safe-id check, in addition to already requiring a DB-backed ownership check to reach that code.
+- **Auth** — passwords hashed with bcrypt (12 salt rounds); JWTs signed with a required, minimum-length secret.
+
 ## What's not built yet
 
 - **Table-scoped sharing enforcement.** `AccessGrant` supports `scope: "TABLE"` (e.g. share just the Invoices table) and validates/stores it, but only `BUSINESS`-scope grants are actively checked right now. Enforcing table-level scope means adding a per-resource check to every module — deliberately deferred until needed.
 - **Stage 2: Google OAuth + Drive.** Per the plan, this happens right before production launch, not during local development. Needs a Google Cloud Console project and OAuth consent screen set up first (external to this repo).
-- **Multi-currency conversion.** Each business has its own `currency`, but the combined dashboard sums raw numbers without conversion. Deferred to Phase 3 per the plan.
-- **Reports/exports, calculated fields, full double-entry views (trial balance, P&L, balance sheet).** All explicitly Phase 2/3 in the plan — the schema is shaped to support them without a rewrite, but the endpoints don't exist yet.
+- **Multi-currency conversion.** Each business picks its own currency (BDT/EUR/USD/CNY), but the combined dashboard and combined report sum raw numbers without conversion. Deferred to Phase 3 per the plan.
+- **Calculated fields, full double-entry views (trial balance, P&L, balance sheet).** Explicitly Phase 2/3 in the plan — the schema is shaped to support them without a rewrite, but the endpoints don't exist yet.
 - **Deployment.** Everything so far is built and tested against a local MySQL/MariaDB instance, per the local-first workflow agreed for this project.
