@@ -2,18 +2,18 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, LineDirection } from '../generated/prisma/client.js';
-import { CreateLedgerDto } from './dto/create-ledger.dto.js';
-import { UpdateLedgerDto } from './dto/update-ledger.dto.js';
+import { CreateAccountDto } from './dto/create-account.dto.js';
+import { UpdateAccountDto } from './dto/update-account.dto.js';
 
 @Injectable()
-export class LedgerService {
+export class AccountService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly businessService: BusinessService,
   ) {}
 
-  private async computeTotals(ledgerId: string) {
-    const lines = await this.prisma.line.findMany({ where: { transaction: { ledgerId } } });
+  private async computeTotals(accountId: string) {
+    const lines = await this.prisma.line.findMany({ where: { transaction: { accountId } } });
     return lines.reduce(
       (acc, line) => {
         const amount = Number(line.amount);
@@ -29,49 +29,49 @@ export class LedgerService {
     );
   }
 
-  async create(userId: string, businessId: string, dto: CreateLedgerDto) {
+  async create(userId: string, businessId: string, dto: CreateAccountDto) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    return this.prisma.ledger.create({ data: { businessId, ...dto } });
+    return this.prisma.account.create({ data: { businessId, ...dto } });
   }
 
   async findAllForBusiness(userId: string, businessId: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
-    const ledgers = await this.prisma.ledger.findMany({
+    const accounts = await this.prisma.account.findMany({
       where: { businessId },
       orderBy: { createdAt: 'asc' },
     });
     return Promise.all(
-      ledgers.map(async (ledger) => ({ ...ledger, ...(await this.computeTotals(ledger.id)) })),
+      accounts.map(async (account) => ({ ...account, ...(await this.computeTotals(account.id)) })),
     );
   }
 
-  private async findLedgerInBusiness(businessId: string, id: string) {
-    const ledger = await this.prisma.ledger.findUnique({ where: { id } });
-    if (!ledger) {
-      throw new NotFoundException('Ledger not found');
+  private async findAccountInBusiness(businessId: string, id: string) {
+    const account = await this.prisma.account.findUnique({ where: { id } });
+    if (!account) {
+      throw new NotFoundException('Account not found');
     }
-    if (ledger.businessId !== businessId) {
-      throw new ForbiddenException('This ledger does not belong to that business');
+    if (account.businessId !== businessId) {
+      throw new ForbiddenException('This account does not belong to that business');
     }
-    return ledger;
+    return account;
   }
 
   async findOneForBusiness(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
-    const ledger = await this.findLedgerInBusiness(businessId, id);
-    return { ...ledger, ...(await this.computeTotals(ledger.id)) };
+    const account = await this.findAccountInBusiness(businessId, id);
+    return { ...account, ...(await this.computeTotals(account.id)) };
   }
 
-  async update(userId: string, businessId: string, id: string, dto: UpdateLedgerDto) {
+  async update(userId: string, businessId: string, id: string, dto: UpdateAccountDto) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    await this.findLedgerInBusiness(businessId, id);
-    return this.prisma.ledger.update({ where: { id }, data: dto });
+    await this.findAccountInBusiness(businessId, id);
+    return this.prisma.account.update({ where: { id }, data: dto });
   }
 
   async remove(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    await this.findLedgerInBusiness(businessId, id);
-    await this.prisma.ledger.delete({ where: { id } });
+    await this.findAccountInBusiness(businessId, id);
+    await this.prisma.account.delete({ where: { id } });
     return { id };
   }
 }

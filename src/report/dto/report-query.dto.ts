@@ -7,9 +7,9 @@ export class ReportQueryDto {
   @IsDateString()
   to: string;
 
-  // Business-scoped reports only — narrows to one ledger within the
+  // Business-scoped reports only — narrows to one account within the
   // venture. Ignored by the combined (all-businesses) report.
   @IsOptional()
   @IsString()
-  ledgerId?: string;
+  accountId?: string;
 }

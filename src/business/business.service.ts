@@ -40,12 +40,12 @@ export class BusinessService {
   }
 
   async create(ownerId: string, dto: CreateBusinessDto) {
-    // Every venture starts with one ledger so its dashboard/ledger pages
+    // Every venture starts with one account so its dashboard/account pages
     // aren't an empty dead-end before the user thinks to create one —
     // matches what existing ventures got backfilled with (see the
-    // add-ledgers migration).
+    // rename-ledger-to-account migration).
     const business = await this.prisma.business.create({
-      data: { ownerId, ...this.encryptBankFields(dto), ledgers: { create: { name: 'General ledger' } } },
+      data: { ownerId, ...this.encryptBankFields(dto), accounts: { create: { name: 'General account' } } },
     });
     return this.decryptBankFields(business);
   }

@@ -1,6 +1,6 @@
 // Prisma schema for the Multi-Business Accounting Tool
 // See ../../Assest and doc/Accounting-Tool-Project-Plan.docx for the full plan.
-// Ledger data is modeled as double-entry (Transaction -> Line[]) from day one,
+// Account data is modeled as double-entry (Transaction -> Line[]) from day one,
 // even though Phase 1's UI only shows a simple money-in/money-out list.
 
 generator client {
@@ -90,7 +90,7 @@ model Business {
 
   categories    Category[]
   transactions  Transaction[]
-  ledgers       Ledger[]
+  accounts      Account[]
   clients       Client[]
   invoices      Invoice[]
   documents     Document[]
@@ -101,7 +101,7 @@ model Business {
 
 // One of a venture's books — a venture can keep several (e.g. "Cash",
 // "Bank") and each has its own independent set of transactions.
-model Ledger {
+model Account {
   id         String   @id @default(cuid())
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -113,7 +113,7 @@ model Ledger {
 
   transactions Transaction[]
 
-  @@map("ledgers")
+  @@map("accounts")
 }
 
 // A saved bill-to party for a business, reused across invoices.
@@ -149,15 +149,15 @@ model Category {
   @@map("categories")
 }
 
-// A ledger entry. Phase 1's UI shows this as a single money-in/money-out row;
+// An account entry. Phase 1's UI shows this as a single money-in/money-out row;
 // underneath it is a debit/credit pair of Lines, so full double-entry views
 // (Phase 3) don't require a schema rewrite.
 model Transaction {
   id         String   @id @default(cuid())
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  ledgerId   String
-  ledger     Ledger   @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   date       DateTime
   memo       String?
   // Who the money moved with — the vendor on a bill you paid (EXPENSE) or

@@ -6,7 +6,7 @@ function createPrismaMock() {
   return {
     transaction: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     category: { findUnique: vi.fn() },
-    ledger: { findUnique: vi.fn().mockResolvedValue({ id: 'ledger1', businessId: 'biz1' }) },
+    account: { findUnique: vi.fn().mockResolvedValue({ id: 'account1', businessId: 'biz1' }) },
     line: { findMany: vi.fn() },
   };
 }
@@ -41,7 +41,7 @@ describe('TransactionService', () => {
 
       await expect(
         service.create('user1', 'biz1', {
-          ledgerId: 'ledger1',
+          accountId: 'account1',
           date: '2026-01-01',
           amount: 10,
           type: CategoryType.INCOME,
@@ -61,7 +61,7 @@ describe('TransactionService', () => {
 
       await expect(
         service.create('user1', 'biz1', {
-          ledgerId: 'ledger1',
+          accountId: 'account1',
           date: '2026-01-01',
           amount: 10,
           type: CategoryType.INCOME,
@@ -80,7 +80,7 @@ describe('TransactionService', () => {
       });
 
       await service.create('user1', 'biz1', {
-        ledgerId: 'ledger1',
+        accountId: 'account1',
         date: '2026-01-01',
         amount: 100,
         type: CategoryType.INCOME,

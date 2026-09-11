@@ -3,7 +3,7 @@ import { CategoryType } from '../../generated/prisma/client.js';
 
 export class CreateTransactionDto {
   @IsString()
-  ledgerId: string;
+  accountId: string;
 
   @IsDateString()
   date: string;

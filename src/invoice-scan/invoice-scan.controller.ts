@@ -10,7 +10,7 @@ const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'ap
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
 @UseGuards(JwtAuthGuard)
-@Controller('businesses/:businessId/ledgers/:ledgerId/scan')
+@Controller('businesses/:businessId/accounts/:accountId/scan')
 export class InvoiceScanController {
   constructor(private readonly invoiceScanService: InvoiceScanService) {}
 
@@ -19,7 +19,7 @@ export class InvoiceScanController {
   scan(
     @CurrentUser() user: AuthenticatedUser,
     @Param('businessId') businessId: string,
-    @Param('ledgerId') ledgerId: string,
+    @Param('accountId') accountId: string,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     if (!file) {
@@ -33,6 +33,6 @@ export class InvoiceScanController {
     if (!matchesFileSignature(file.buffer, file.mimetype)) {
       throw new BadRequestException("That file's contents don't match a PDF, JPG, PNG, or WEBP");
     }
-    return this.invoiceScanService.scan(user.id, businessId, ledgerId, file.buffer, file.mimetype);
+    return this.invoiceScanService.scan(user.id, businessId, accountId, file.buffer, file.mimetype);
   }
 }

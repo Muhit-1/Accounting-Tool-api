@@ -156,10 +156,10 @@ export class InvoiceScanService {
     private readonly businessService: BusinessService,
   ) {}
 
-  private async assertLedgerBelongsToBusiness(businessId: string, ledgerId: string) {
-    const ledger = await this.prisma.ledger.findUnique({ where: { id: ledgerId } });
-    if (!ledger || ledger.businessId !== businessId) {
-      throw new BadRequestException('Ledger does not belong to this business');
+  private async assertAccountBelongsToBusiness(businessId: string, accountId: string) {
+    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    if (!account || account.businessId !== businessId) {
+      throw new BadRequestException('Account does not belong to this business');
     }
   }
 
@@ -222,9 +222,9 @@ export class InvoiceScanService {
     }
   }
 
-  async scan(userId: string, businessId: string, ledgerId: string, buffer: Buffer, mimetype: string) {
+  async scan(userId: string, businessId: string, accountId: string, buffer: Buffer, mimetype: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    await this.assertLedgerBelongsToBusiness(businessId, ledgerId);
+    await this.assertAccountBelongsToBusiness(businessId, accountId);
 
     const text = await this.extractText(buffer, mimetype);
 

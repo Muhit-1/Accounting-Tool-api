@@ -40,9 +40,9 @@ export class TransactionController {
   findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Param('businessId') businessId: string,
-    @Query('ledgerId') ledgerId?: string,
+    @Query('accountId') accountId?: string,
   ) {
-    return this.transactionService.findAllForBusiness(user.id, businessId, ledgerId);
+    return this.transactionService.findAllForBusiness(user.id, businessId, accountId);
   }
 
   @Get('balance')

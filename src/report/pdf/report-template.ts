@@ -20,7 +20,7 @@ export interface ReportPdfCategoryRow {
 export interface ReportPdfSection {
   businessName: string;
   currency: string;
-  ledgerName?: string | null;
+  accountName?: string | null;
   totals: { totalIncome: number; totalExpense: number; balance: number };
   byCategory: ReportPdfCategoryRow[];
   transactions: ReportPdfTransaction[];
@@ -54,10 +54,10 @@ function formatMoney(amount: number, currency: string): string {
 }
 
 function renderSection(section: ReportPdfSection): string {
-  const { businessName, currency, ledgerName, totals, byCategory, transactions } = section;
+  const { businessName, currency, accountName, totals, byCategory, transactions } = section;
   return `
   <div class="section">
-    <h2>${escapeHtml(businessName)}${ledgerName ? ` — ${escapeHtml(ledgerName)}` : ''}</h2>
+    <h2>${escapeHtml(businessName)}${accountName ? ` — ${escapeHtml(accountName)}` : ''}</h2>
 
     <table class="totals">
       <tr><td>Total income</td><td class="num income">${formatMoney(totals.totalIncome, currency)}</td></tr>

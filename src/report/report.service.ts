@@ -101,19 +101,19 @@ export class ReportService {
     return { from, to };
   }
 
-  private async assertLedgerBelongsToBusiness(businessId: string, ledgerId: string) {
-    const ledger = await this.prisma.ledger.findUnique({ where: { id: ledgerId } });
-    if (!ledger || ledger.businessId !== businessId) {
-      throw new BadRequestException('Ledger does not belong to this business');
+  private async assertAccountBelongsToBusiness(businessId: string, accountId: string) {
+    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    if (!account || account.businessId !== businessId) {
+      throw new BadRequestException('Account does not belong to this business');
     }
-    return ledger;
+    return account;
   }
 
-  private async fetchTransactions(businessId: string, from: Date, to: Date, ledgerId?: string) {
+  private async fetchTransactions(businessId: string, from: Date, to: Date, accountId?: string) {
     return this.prisma.transaction.findMany({
       where: {
         businessId,
-        ...(ledgerId ? { ledgerId } : {}),
+        ...(accountId ? { accountId } : {}),
         date: { gte: from, lte: to },
       },
       orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
@@ -125,17 +125,17 @@ export class ReportService {
     const business = await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
     const { from, to } = this.parseRange(dto);
 
-    let ledger: { id: string; name: string } | null = null;
-    if (dto.ledgerId) {
-      ledger = await this.assertLedgerBelongsToBusiness(businessId, dto.ledgerId);
+    let account: { id: string; name: string } | null = null;
+    if (dto.accountId) {
+      account = await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     }
 
-    const raw = await this.fetchTransactions(businessId, from, to, dto.ledgerId);
+    const raw = await this.fetchTransactions(businessId, from, to, dto.accountId);
     const transactions = toReportTransactions(raw);
 
     return {
       business: { id: business.id, name: business.name, currency: business.currency },
-      ledger: ledger ? { id: ledger.id, name: ledger.name } : null,
+      account: account ? { id: account.id, name: account.name } : null,
       period: { from: dto.from, to: dto.to },
       totals: computeTotals(transactions),
       byCategory: computeCategoryBreakdown(transactions),
@@ -192,7 +192,7 @@ export class ReportService {
     const section: ReportPdfSection = {
       businessName: report.business.name,
       currency: report.business.currency,
-      ledgerName: report.ledger?.name,
+      accountName: report.account?.name,
       totals: report.totals,
       byCategory: report.byCategory,
       transactions: report.transactions,

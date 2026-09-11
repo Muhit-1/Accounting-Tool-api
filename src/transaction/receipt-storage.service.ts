@@ -11,7 +11,7 @@ const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   'image/webp': 'webp',
 };
 
-// The invoice/receipt a user uploaded when creating a ledger entry via
+// The invoice/receipt a user uploaded when creating an account entry via
 // "Upload invoice" — kept on local disk (Stage 1, same pattern as
 // InvoiceStorageService) so they can open it again later.
 @Injectable()

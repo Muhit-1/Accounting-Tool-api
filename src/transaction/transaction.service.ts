@@ -24,7 +24,7 @@ function typeForDirection(direction: LineDirection): CategoryType {
 
 function toResponse(tx: {
   id: string;
-  ledgerId: string;
+  accountId: string;
   date: Date;
   memo: string | null;
   counterparty: string | null;
@@ -35,7 +35,7 @@ function toResponse(tx: {
   const line = tx.lines[0];
   return {
     id: tx.id,
-    ledgerId: tx.ledgerId,
+    accountId: tx.accountId,
     date: tx.date,
     memo: tx.memo,
     counterparty: tx.counterparty,
@@ -78,16 +78,16 @@ export class TransactionService {
     }
   }
 
-  private async assertLedgerBelongsToBusiness(businessId: string, ledgerId: string) {
-    const ledger = await this.prisma.ledger.findUnique({ where: { id: ledgerId } });
-    if (!ledger || ledger.businessId !== businessId) {
-      throw new BadRequestException('Ledger does not belong to this business');
+  private async assertAccountBelongsToBusiness(businessId: string, accountId: string) {
+    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    if (!account || account.businessId !== businessId) {
+      throw new BadRequestException('Account does not belong to this business');
     }
   }
 
   async create(userId: string, businessId: string, dto: CreateTransactionDto) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    await this.assertLedgerBelongsToBusiness(businessId, dto.ledgerId);
+    await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, dto.type);
     }
@@ -95,7 +95,7 @@ export class TransactionService {
     const tx = await this.prisma.transaction.create({
       data: {
         businessId,
-        ledgerId: dto.ledgerId,
+        accountId: dto.accountId,
         date: new Date(dto.date),
         memo: dto.memo,
         counterparty: dto.counterparty,
@@ -113,13 +113,13 @@ export class TransactionService {
     return toResponse(tx);
   }
 
-  async findAllForBusiness(userId: string, businessId: string, ledgerId?: string) {
+  async findAllForBusiness(userId: string, businessId: string, accountId?: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
-    if (ledgerId) {
-      await this.assertLedgerBelongsToBusiness(businessId, ledgerId);
+    if (accountId) {
+      await this.assertAccountBelongsToBusiness(businessId, accountId);
     }
     const transactions = await this.prisma.transaction.findMany({
-      where: ledgerId ? { businessId, ledgerId } : { businessId },
+      where: accountId ? { businessId, accountId } : { businessId },
       orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
       include: { lines: { include: { category: true } } },
     });
@@ -165,14 +165,14 @@ export class TransactionService {
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, nextType);
     }
-    if (dto.ledgerId) {
-      await this.assertLedgerBelongsToBusiness(businessId, dto.ledgerId);
+    if (dto.accountId) {
+      await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     }
 
     const tx = await this.prisma.transaction.update({
       where: { id },
       data: {
-        ledgerId: dto.ledgerId,
+        accountId: dto.accountId,
         date: dto.date ? new Date(dto.date) : undefined,
         memo: dto.memo,
         counterparty: dto.counterparty,

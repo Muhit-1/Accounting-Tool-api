@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
 import { BusinessModule } from '../business/business.module.js';
-import { LedgerController } from './ledger.controller.js';
-import { LedgerService } from './ledger.service.js';
+import { AccountController } from './account.controller.js';
+import { AccountService } from './account.service.js';
 
 @Module({
   imports: [AuthModule, BusinessModule],
-  controllers: [LedgerController],
-  providers: [LedgerService],
+  controllers: [AccountController],
+  providers: [AccountService],
 })
-export class LedgerModule {}
+export class AccountModule {}
