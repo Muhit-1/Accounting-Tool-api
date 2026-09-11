@@ -14,6 +14,21 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+// Prisma's Decimal fields (subTotal/total/quantity/rate/amount) serialize to
+// JSON as strings (decimal.js's toJSON() returns toString()), which is
+// correct for arbitrary precision but silently breaks any client-side
+// arithmetic across multiple invoices (e.g. summing `total` string-
+// concatenates instead of adding). Every response leaving this service
+// coerces them back to numbers so the API's JSON contract matches its
+// documented `number` types.
+function serializeTotals<T extends { subTotal: unknown; total: unknown }>(invoice: T) {
+  return { ...invoice, subTotal: Number(invoice.subTotal), total: Number(invoice.total) };
+}
+
+function serializeItems<T extends { quantity: unknown; rate: unknown; amount: unknown }>(items: T[]) {
+  return items.map((item) => ({ ...item, quantity: Number(item.quantity), rate: Number(item.rate), amount: Number(item.amount) }));
+}
+
 function toBusinessPdfData(business: Business) {
   return {
     name: business.name,
@@ -140,11 +155,12 @@ export class InvoiceService {
 
       const fileReference = await this.storageService.save(businessId, invoice.id, pdf);
 
-      return await this.prisma.invoice.update({
+      const saved = await this.prisma.invoice.update({
         where: { id: invoice.id },
         data: { fileReference },
         include: { items: true },
       });
+      return { ...serializeTotals(saved), items: serializeItems(saved.items) };
     } catch (error) {
       await this.prisma.invoice.delete({ where: { id: invoice.id } }).catch(() => undefined);
       throw error;
@@ -153,16 +169,18 @@ export class InvoiceService {
 
   async findAllForBusiness(userId: string, businessId: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
-    return this.prisma.invoice.findMany({
+    const invoices = await this.prisma.invoice.findMany({
       where: { businessId },
       orderBy: { issueDate: 'desc' },
       include: { client: true },
     });
+    return invoices.map((invoice) => serializeTotals(invoice));
   }
 
   async findOneForBusiness(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.VIEW);
-    return this.findInvoiceWithItemsAndClient(businessId, id);
+    const invoice = await this.findInvoiceWithItemsAndClient(businessId, id);
+    return { ...serializeTotals(invoice), items: serializeItems(invoice.items) };
   }
 
   // Full content edit (client, dates, terms, number, items) — regenerates
@@ -237,17 +255,19 @@ export class InvoiceService {
     // Same invoiceId → same on-disk path, so this overwrites the old PDF.
     const fileReference = await this.storageService.save(businessId, id, pdf);
 
-    return this.prisma.invoice.update({
+    const saved = await this.prisma.invoice.update({
       where: { id },
       data: { fileReference },
       include: { items: true, client: true },
     });
+    return { ...serializeTotals(saved), items: serializeItems(saved.items) };
   }
 
   async updateStatus(userId: string, businessId: string, id: string, status: InvoiceStatus) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     await this.findInvoiceInBusiness(businessId, id);
-    return this.prisma.invoice.update({ where: { id }, data: { status } });
+    const updated = await this.prisma.invoice.update({ where: { id }, data: { status } });
+    return serializeTotals(updated);
   }
 
   async remove(userId: string, businessId: string, id: string) {
