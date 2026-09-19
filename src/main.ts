@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
@@ -26,7 +27,22 @@ function assertSecretsConfigured() {
 async function bootstrap() {
   assertSecretsConfigured();
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    // Cap JSON bodies: 1mb covers the largest legitimate payload (a logo up
+    // to 500KB, base64-encoded) without letting anyone post huge documents.
+    bodyParser: true,
+  });
+  app.useBodyParser('json', { limit: '1mb' });
+  app.useBodyParser('urlencoded', { limit: '100kb', extended: false });
+  app.disable('x-powered-by');
+  // Behind a reverse proxy/load balancer, set TRUST_PROXY (e.g. "1") so
+  // req.ip — which the rate limiter keys on — is the real client, not the
+  // proxy. Left off by default: trusting X-Forwarded-For with no proxy in
+  // front lets any client spoof its IP and dodge rate limits.
+  if (process.env.TRUST_PROXY) {
+    app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+  }
+  app.enableShutdownHooks();
 
   app.use(
     helmet({
@@ -39,9 +55,20 @@ async function bootstrap() {
     }),
   );
 
+  const allowedOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (allowedOrigins.includes('*')) {
+    throw new Error('Refusing to start: CORS_ORIGIN must list explicit origins, not "*"');
+  }
   app.enableCors({
-    origin: (process.env.CORS_ORIGIN ?? 'http://localhost:5173').split(','),
-    credentials: true,
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
+    // Auth is a bearer token in the Authorization header, not a cookie.
+    credentials: false,
+    maxAge: 600,
   });
 
   app.useGlobalPipes(

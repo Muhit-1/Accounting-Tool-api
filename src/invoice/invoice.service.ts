@@ -57,8 +57,12 @@ export class InvoiceService {
   ) {}
 
   private async nextInvoiceNumber(businessId: string): Promise<string> {
-    const count = await this.prisma.invoice.count({ where: { businessId } });
-    return String(1001 + count);
+    // Highest existing numeric number + 1 — not a row count, which reuses a
+    // number (and hits the unique constraint) as soon as any invoice is
+    // deleted. Custom, non-numeric numbers are ignored for sequencing.
+    const existing = await this.prisma.invoice.findMany({ where: { businessId }, select: { number: true } });
+    const highest = existing.reduce((max, { number }) => (/^\d{1,9}$/.test(number) ? Math.max(max, Number(number)) : max), 1000);
+    return String(highest + 1);
   }
 
   async previewNextNumber(userId: string, businessId: string) {

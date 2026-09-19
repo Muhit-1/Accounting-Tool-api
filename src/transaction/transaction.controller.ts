@@ -16,11 +16,14 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
+import { contentDisposition } from '../common/content-disposition.js';
+import { RateLimit } from '../common/rate-limit.guard.js';
 import { TransactionService } from './transaction.service.js';
 import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
 
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
+const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 
 @UseGuards(JwtAuthGuard)
 @Controller('businesses/:businessId/transactions')
@@ -78,6 +81,7 @@ export class TransactionController {
     return this.transactionService.remove(user.id, businessId, id);
   }
 
+  @RateLimit(UPLOAD_RATE_LIMIT)
   @Post(':id/receipt')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_RECEIPT_BYTES } }))
   attachReceipt(
@@ -98,7 +102,7 @@ export class TransactionController {
     const { buffer, filename, mimeType } = await this.transactionService.getReceipt(user.id, businessId, id);
     return new StreamableFile(buffer, {
       type: mimeType,
-      disposition: `inline; filename="${filename}"`,
+      disposition: contentDisposition('inline', filename),
     });
   }
 }

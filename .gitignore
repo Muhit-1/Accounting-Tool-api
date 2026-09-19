@@ -31,3 +31,8 @@ prisma/migrations/dev.db
 
 # Stage 1 local invoice PDF storage
 /storage/
+
+# Claude Code guidance / local settings (kept out of the repo)
+CLAUDE.md
+CLAUDE.local.md
+.claude/

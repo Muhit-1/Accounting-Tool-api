@@ -3,17 +3,21 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
+import { RateLimit } from '../common/rate-limit.guard.js';
 import { matchesFileSignature } from '../common/file-signature.js';
 import { InvoiceScanService } from './invoice-scan.service.js';
 
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
+// OCR is CPU-heavy, so scanning gets a much tighter budget than the default.
+const SCAN_RATE_LIMIT = { limit: 10, windowMs: 60_000 };
 
 @UseGuards(JwtAuthGuard)
 @Controller('businesses/:businessId/accounts/:accountId/scan')
 export class InvoiceScanController {
   constructor(private readonly invoiceScanService: InvoiceScanService) {}
 
+  @RateLimit(SCAN_RATE_LIMIT)
   @Post()
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_FILE_BYTES } }))
   scan(

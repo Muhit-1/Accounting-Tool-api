@@ -1,10 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, StreamableFile, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from '../auth/decorators/current-user.decorator.js';
+import { contentDisposition } from '../common/content-disposition.js';
+import { RateLimit } from '../common/rate-limit.guard.js';
 import { InvoiceService } from './invoice.service.js';
 import { CreateInvoiceDto } from './dto/create-invoice.dto.js';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto.js';
 import { UpdateInvoiceStatusDto } from './dto/update-invoice-status.dto.js';
+
+// PDF rendering launches headless Chromium — far costlier than a normal request.
+const PDF_RATE_LIMIT = { limit: 15, windowMs: 60_000 };
 
 @UseGuards(JwtAuthGuard)
 @Controller('businesses/:businessId/invoices')
@@ -40,6 +45,7 @@ export class InvoiceController {
     return this.invoiceService.findOneForBusiness(user.id, businessId, id);
   }
 
+  @RateLimit(PDF_RATE_LIMIT)
   @Get(':id/pdf')
   async getPdf(
     @CurrentUser() user: AuthenticatedUser,
@@ -49,7 +55,7 @@ export class InvoiceController {
     const { buffer, filename } = await this.invoiceService.getPdf(user.id, businessId, id);
     return new StreamableFile(buffer, {
       type: 'application/pdf',
-      disposition: `attachment; filename="${filename}"`,
+      disposition: contentDisposition('attachment', filename),
     });
   }
 

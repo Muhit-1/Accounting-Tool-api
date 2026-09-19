@@ -7,6 +7,11 @@ import { LoginDto } from './dto/login.dto.js';
 
 const SALT_ROUNDS = 12;
 
+// Compared against when the email is unknown so a login for a missing user
+// takes as long as one for a real user — otherwise response time reveals
+// which emails are registered.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', SALT_ROUNDS);
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -30,12 +35,8 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user || !user.passwordHash) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    const passwordMatches = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!passwordMatches) {
+    const passwordMatches = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
+    if (!user || !user.passwordHash || !passwordMatches) {
       throw new UnauthorizedException('Invalid email or password');
     }
 

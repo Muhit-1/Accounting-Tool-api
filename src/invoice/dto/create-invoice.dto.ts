@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsDateString, IsOptional, IsString, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsDateString, IsOptional, IsString, MaxLength, MinLength, ValidateNested } from 'class-validator';
 import { InvoiceItemDto } from './invoice-item.dto.js';
 
 export class CreateInvoiceDto {
@@ -11,12 +11,14 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(50)
   number?: string;
 
   @IsDateString()
   issueDate: string;
 
   @IsString()
+  @MaxLength(5000)
   terms: string;
 
   @IsDateString()
@@ -25,5 +27,6 @@ export class CreateInvoiceDto {
   @ValidateNested({ each: true })
   @Type(() => InvoiceItemDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(200)
   items: InvoiceItemDto[];
 }

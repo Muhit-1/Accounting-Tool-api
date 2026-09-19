@@ -165,6 +165,12 @@ export class TransactionService {
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, nextType);
     }
+    // Flipping INCOME <-> EXPENSE without picking a new category would leave
+    // the entry filed under a category of the opposite type; drop it instead.
+    let categoryId: string | null | undefined = dto.categoryId;
+    if (dto.type && dto.type !== typeForDirection(line.direction) && dto.categoryId === undefined) {
+      categoryId = null;
+    }
     if (dto.accountId) {
       await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     }
@@ -182,7 +188,7 @@ export class TransactionService {
             data: {
               amount: dto.amount,
               direction: dto.type ? directionForType(dto.type) : undefined,
-              categoryId: dto.categoryId,
+              categoryId,
             },
           },
         },
@@ -238,7 +244,7 @@ export class TransactionService {
       where: { id },
       data: {
         receiptFileReference: fileReference,
-        receiptFileName: file.originalname,
+        receiptFileName: file.originalname.slice(0, 150),
         receiptMimeType: file.mimetype,
       },
       include: { lines: { include: { category: true } } },

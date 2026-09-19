@@ -40,6 +40,8 @@ export interface InvoiceHtmlData {
   items: InvoiceHtmlItem[];
 }
 
+import { LOGO_DATA_URI_PATTERN } from '../../common/validators.js';
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -128,7 +130,7 @@ export function renderInvoiceHtml(data: InvoiceHtmlData): string {
 <body>
   <div class="header">
     <div>
-      ${business.logoUrl ? `<img class="logo" src="${escapeHtml(business.logoUrl)}">` : ''}
+      ${business.logoUrl && LOGO_DATA_URI_PATTERN.test(business.logoUrl) ? `<img class="logo" src="${escapeHtml(business.logoUrl)}">` : ''}
       <div class="sender-name">${escapeHtml(business.name)}</div>
       <div class="sender-details">
         ${business.address ? multiline(business.address) + '<br>' : ''}

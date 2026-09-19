@@ -87,6 +87,10 @@ export class BusinessService {
       where: { businessId: id },
       select: { fileReference: true },
     });
+    const receipts = await this.prisma.transaction.findMany({
+      where: { businessId: id, receiptFileReference: { not: null } },
+      select: { receiptFileReference: true },
+    });
     await this.prisma.invoice.deleteMany({ where: { businessId: id } });
     await this.prisma.client.deleteMany({ where: { businessId: id } });
     await this.prisma.business.delete({ where: { id } });
@@ -95,6 +99,10 @@ export class BusinessService {
       invoices
         .filter((invoice) => invoice.fileReference)
         .map((invoice) => rm(invoice.fileReference!, { force: true }).catch(() => undefined)),
+    );
+    // Uploaded receipts live on disk too — don't leave them orphaned.
+    await Promise.all(
+      receipts.map((tx) => rm(tx.receiptFileReference!, { force: true }).catch(() => undefined)),
     );
 
     return { id };

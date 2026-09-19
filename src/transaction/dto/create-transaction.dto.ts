@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsPositive, IsString, Max, MaxLength } from 'class-validator';
 import { CategoryType } from '../../generated/prisma/client.js';
 
 export class CreateTransactionDto {
@@ -10,12 +10,14 @@ export class CreateTransactionDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   memo?: string;
 
   // Vendor you paid (EXPENSE) or client who paid you (INCOME) — usually
   // prefilled from a scanned/uploaded invoice.
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   counterparty?: string;
 
   @IsOptional()
@@ -24,6 +26,7 @@ export class CreateTransactionDto {
 
   @IsNumber()
   @IsPositive()
+  @Max(9_999_999_999)
   amount: number;
 
   // Whether this entry adds to (INCOME) or subtracts from (EXPENSE) the

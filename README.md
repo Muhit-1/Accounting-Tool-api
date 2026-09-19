@@ -49,6 +49,7 @@ Server listens on `http://localhost:3000` by default (`PORT` in `.env`).
 | `ENCRYPTION_KEY` | Base64-encoded 32-byte key used to encrypt sensitive fields (business bank details) at rest. Must decode to exactly 32 bytes — the app refuses to start otherwise. Never commit this. |
 | `INVOICE_STORAGE_DIR` | Where generated invoice PDFs are saved (Stage 1 local disk), e.g. `./storage/invoices` |
 | `RECEIPT_STORAGE_DIR` | Where uploaded invoice/receipt files are saved so they can be reopened later, e.g. `./storage/receipts` |
+| `TRUST_PROXY` | Optional. Proxy hop count when deployed behind a reverse proxy/load balancer (e.g. `1`). Leave unset otherwise. |
 | `CORS_ORIGIN` | Comma-separated list of allowed frontend origins, e.g. `http://localhost:5173` |
 | `PUPPETEER_CACHE_DIR` | Only needed if Puppeteer's Chromium was installed to a non-default cache directory |
 
@@ -255,7 +256,13 @@ A hardening pass covers the usual checklist for an API handling financial data:
 - **File upload safety** — every upload endpoint (invoice scan, transaction receipts) checks the file's actual magic bytes against its claimed MIME type, on top of a MIME allowlist and a size limit — a spoofed `Content-Type` header alone can't get a file past the check.
 - **Security headers** — `helmet` is applied globally (with `crossOriginResourcePolicy` relaxed to `cross-origin` so the frontend's cross-origin `fetch()` for PDFs/receipts keeps working; CORS still restricts which origins may call the API at all, via `CORS_ORIGIN`).
 - **Path safety** — on-disk paths for stored invoices/receipts are built only from IDs that pass a strict safe-id check, in addition to already requiring a DB-backed ownership check to reach that code.
-- **Auth** — passwords hashed with bcrypt (12 salt rounds); JWTs signed with a required, minimum-length secret.
+- **Auth** — passwords hashed with bcrypt (12 salt rounds, max 72 chars), emails normalized to lowercase; JWTs signed with a required, minimum-length secret, algorithm pinned to HS256, and re-checked against the database on every request (a deleted user's token stops working). Login does a dummy bcrypt compare for unknown emails so timing doesn't reveal which emails exist.
+- **PDF rendering is sandboxed from the network** — `src/common/pdf-browser.ts` aborts every request the headless Chromium page makes except inline `data:` URIs, disables JavaScript, caps concurrent renders at 2, and times out. `Business.logoUrl` is validated as a base64 PNG/JPEG/WEBP/GIF data URI (never a remote URL), closing the SSRF / local-file-read route through invoice logos.
+- **Header-safe downloads** — `Content-Disposition` filenames (user-controlled invoice numbers, uploaded receipt names) are sanitized in `src/common/content-disposition.ts`.
+- **Tighter limits on costly routes** — PDF endpoints 15/min, invoice scan (OCR) 10/min, receipt upload 20/min, on top of the global 100/min. JSON bodies capped at 1mb. DTO string/number fields have maximum lengths.
+- **CORS / proxy** — explicit origin list (wildcard `*` refuses to start), only the methods/headers the frontend uses, no credentials (bearer token, not cookies). Set `TRUST_PROXY` behind a reverse proxy so per-IP rate limits see real client IPs.
+
+Still to do before production: serve over HTTPS only, move the rate-limit counters to a shared store if running more than one instance, and consider per-account (not just per-IP) login lockout.
 
 ## What's not built yet
 
