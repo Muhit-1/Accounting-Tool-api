@@ -10,6 +10,19 @@ import puppeteer from 'puppeteer';
 const MAX_CONCURRENT_RENDERS = 2;
 const RENDER_TIMEOUT_MS = 30_000;
 
+// Chromium's own sandbox needs kernel features Docker's default seccomp
+// profile blocks, so it only works in a container with it switched off — an
+// opt-in via PUPPETEER_NO_SANDBOX, never the default, because outside a
+// container the sandbox is a real defence. /dev/shm is only 64MB in Docker
+// and Chromium crashes when it fills, so shared memory goes to /tmp instead.
+export function buildLaunchArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const args = ['--disable-dev-shm-usage'];
+  if (env.PUPPETEER_NO_SANDBOX === 'true') {
+    args.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
+  return args;
+}
+
 let active = 0;
 const waiting: Array<() => void> = [];
 
@@ -33,7 +46,7 @@ function release(): void {
 export async function renderHtmlToPdf(html: string): Promise<Buffer> {
   await acquire();
   try {
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({ headless: true, args: buildLaunchArgs() });
     try {
       const page = await browser.newPage();
       await page.setJavaScriptEnabled(false);

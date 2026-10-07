@@ -1,4 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
 import Tesseract from 'tesseract.js';
 import * as chrono from 'chrono-node';
 import { createCanvas } from '@napi-rs/canvas';
@@ -6,6 +9,31 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission } from '../generated/prisma/client.js';
+
+// eng.traineddata is committed to the repo (it is ~5MB, but small next to the
+// failure it prevents): tesseract.js would otherwise download it from a CDN on
+// first use and cache it in the working directory, which breaks in a
+// container with no outbound internet or a read-only cwd. The app root is two
+// levels up from this file whether it runs from src/ (tests), dist/ (node
+// dist/main) or /app/dist (Docker).
+const TESSDATA_DIR = fileURLToPath(new URL('../../', import.meta.url));
+const TESSDATA_FILE = join(TESSDATA_DIR, 'eng.traineddata');
+
+// langPath points at the local directory, gzip:false because the committed
+// file is plain .traineddata (not .traineddata.gz), and cacheMethod:'none'
+// means tesseract.js never reads or writes a cache and so never falls back to
+// the network — the file above is the only source.
+const OCR_OPTIONS = { langPath: TESSDATA_DIR, gzip: false, cacheMethod: 'none' } as const;
+
+function recognize(image: Buffer): Promise<Tesseract.RecognizeResult> {
+  if (!existsSync(TESSDATA_FILE)) {
+    // Not a BadRequest: the caller's file is fine, the deployment is broken.
+    throw new InternalServerErrorException(
+      `OCR language data is missing (expected ${TESSDATA_FILE}). eng.traineddata must ship with the app.`,
+    );
+  }
+  return Tesseract.recognize(image, 'eng', OCR_OPTIONS);
+}
 
 // Below this many non-whitespace characters, a PDF's embedded text layer is
 // treated as absent — the PDF is almost certainly a scanned/photographed
@@ -204,7 +232,7 @@ export class InvoiceScanService {
     await page.render({ canvas: canvas as never, viewport }).promise;
     const {
       data: { text: ocrText },
-    } = await Tesseract.recognize(canvas.toBuffer('image/png'), 'eng');
+    } = await recognize(canvas.toBuffer('image/png'));
     return ocrText;
   }
 
@@ -216,8 +244,11 @@ export class InvoiceScanService {
     try {
       return mimetype === 'application/pdf'
         ? await this.extractPdfText(buffer)
-        : (await Tesseract.recognize(buffer, 'eng')).data.text;
-    } catch {
+        : (await recognize(buffer)).data.text;
+    } catch (error) {
+      // A missing OCR data file is a broken deployment, not a bad upload —
+      // don't blame the user's file for it.
+      if (error instanceof InternalServerErrorException) throw error;
       throw new BadRequestException("Couldn't read that file — it may be corrupted or an unsupported format");
     }
   }

@@ -52,6 +52,8 @@ Server listens on `http://localhost:3000` by default (`PORT` in `.env`).
 | `TRUST_PROXY` | Optional. Proxy hop count when deployed behind a reverse proxy/load balancer (e.g. `1`). Leave unset otherwise. |
 | `CORS_ORIGIN` | Comma-separated list of allowed frontend origins, e.g. `http://localhost:5173` |
 | `PUPPETEER_CACHE_DIR` | Only needed if Puppeteer's Chromium was installed to a non-default cache directory |
+| `PUPPETEER_EXECUTABLE_PATH` | Optional. Path to a system Chromium (read by Puppeteer itself). Set to `/usr/bin/chromium` in the Docker image. |
+| `PUPPETEER_NO_SANDBOX` | Optional. Exactly `true` adds `--no-sandbox --disable-setuid-sandbox` to Chromium. Only for containers, where the sandbox can't start; set in the Docker image. |
 
 Generate a `JWT_SECRET`:
 ```bash
@@ -131,7 +133,7 @@ Every business-scoped endpoint (categories, transactions, clients, invoices, das
 
 ## API reference
 
-All endpoints except `/auth/register` and `/auth/login` require `Authorization: Bearer <token>`. Endpoints nested under `/businesses/:businessId/...` apply the authorization model above.
+All endpoints except `GET /`, `GET /health`, `/auth/register` and `/auth/login` require `Authorization: Bearer <token>`. Endpoints nested under `/businesses/:businessId/...` apply the authorization model above.
 
 ### Auth (`/auth`)
 
@@ -208,7 +210,8 @@ All endpoints except `/auth/register` and `/auth/login` require `Authorization: 
 | GET | `.../invoices` | — |
 | GET | `.../invoices/:id` | — includes line items and client |
 | GET | `.../invoices/:id/pdf` | — streams the generated PDF as an attachment |
-| PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — invoice content (items, client, dates) is immutable after creation by design; only the status transitions |
+| PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. `409` if the new number is already used in this business. |
+| PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — changes only the status, not the content or the PDF |
 | DELETE | `.../invoices/:id` | Also deletes the PDF from disk |
 
 ### Dashboards
@@ -235,6 +238,29 @@ All endpoints except `/auth/register` and `/auth/login` require `Authorization: 
 | GET | `.../access-grants` | Lists all grants on the business, each with a computed `status`: `active` / `expired` / `revoked` |
 | DELETE | `.../access-grants/:id` | Revokes immediately (idempotent) |
 | GET | `/shared-with-me` | Lists active business-scope grants where you're the collaborator |
+
+## Deployment (Docker / Coolify)
+
+The `Dockerfile` builds a multi-stage image (`node:24-bookworm-slim`, Debian/glibc — not Alpine): it compiles the app, prunes dev dependencies, and installs Debian's `chromium` for PDF rendering. It runs as the non-root `node` user and listens on port `3000`.
+
+| Variable | Value | Notes |
+|---|---|---|
+| `DATABASE_URL` | `mysql://USER:PASSWORD@<internal-host>:3306/<db>` | **Required.** Use the database's internal hostname, never a public port. |
+| `JWT_SECRET` | random, ≥ 32 chars | **Required.** Generate fresh for production. |
+| `ENCRYPTION_KEY` | base64, 32 bytes | **Required.** Generate fresh; back it up — losing it makes bank details unreadable. |
+| `JWT_EXPIRES_IN` | `1d` | |
+| `CORS_ORIGIN` | exact web origin, e.g. `https://exin-finance.sam-trek.com` | **Required.** No trailing slash, never `*`. |
+| `TRUST_PROXY` | `1` | One proxy hop (Traefik), so rate limits see real client IPs. |
+| `NODE_ENV`, `PORT` | `production`, `3000` | Set to these in the image; `PORT` must match the exposed port. |
+| `INVOICE_STORAGE_DIR`, `RECEIPT_STORAGE_DIR` | `/data/invoices`, `/data/receipts` | Set in the image. Never change them once real data exists (absolute paths are stored in the database). |
+| `PUPPETEER_EXECUTABLE_PATH`, `PUPPETEER_NO_SANDBOX` | `/usr/bin/chromium`, `true` | Set in the image. |
+
+- **Persistent volume:** mount a volume at `/data`. Without it, every redeploy deletes invoice PDFs and receipts.
+- **Health check:** `GET /health` on port `3000` returns `{ "status": "ok" }`. It is unauthenticated, never touches the database, and has a higher rate limit (600/min) than other routes. (`GET /` also answers with a plain greeting.) The image includes `curl` for Coolify's probe.
+- **Migrations** run automatically at container start (`prisma migrate deploy`, configured in `prisma.config.ts`) before the server starts. Back up the database before deploying a migration that drops or renames anything.
+- **OCR** uses the `eng.traineddata` committed in the repo root (copied into the image); nothing is downloaded at runtime.
+- **ARM64:** Debian's `chromium` package, `node:24-bookworm-slim`, `bcrypt` and `@napi-rs/canvas` all have ARM64 builds, so the image builds on an ARM64 server. Puppeteer's own Chrome download is skipped because it doesn't exist for Linux ARM64.
+- **PDF fonts:** `fonts-noto-core` and `fonts-liberation` are installed. If a PDF with Bangla text or the ৳ sign shows empty boxes, add another font package to the `apt-get install` line.
 
 ## Testing
 
@@ -270,4 +296,3 @@ Still to do before production: serve over HTTPS only, move the rate-limit counte
 - **Stage 2: Google OAuth + Drive.** Per the plan, this happens right before production launch, not during local development. Needs a Google Cloud Console project and OAuth consent screen set up first (external to this repo).
 - **Multi-currency conversion.** Each business picks its own currency (BDT/EUR/USD/CNY), but the combined dashboard and combined report sum raw numbers without conversion. Deferred to Phase 3 per the plan.
 - **Calculated fields, full double-entry views (trial balance, P&L, balance sheet).** Explicitly Phase 2/3 in the plan — the schema is shaped to support them without a rewrite, but the endpoints don't exist yet.
-- **Deployment.** Everything so far is built and tested against a local MySQL/MariaDB instance, per the local-first workflow agreed for this project.
