@@ -100,6 +100,8 @@ report/         Date-range reports, per business (+ optional account filter)
                 or combined across every owned business; on-screen JSON and
                 PDF export
 dashboard/      Per-business and combined cost-tracking summaries
+legal/          Public Privacy Policy and Terms of Service (GET /legal/:slug),
+                content kept in TypeScript files
 access-grant/   Sharing: grant/revoke time-limited business access
 encryption/     AES-256-GCM encryption for sensitive fields at rest
 common/         Cross-cutting security helpers: rate limiting, file-signature
@@ -133,7 +135,7 @@ Every business-scoped endpoint (categories, transactions, clients, invoices, das
 
 ## API reference
 
-All endpoints except `GET /`, `GET /health`, `/auth/register` and `/auth/login` require `Authorization: Bearer <token>`. Endpoints nested under `/businesses/:businessId/...` apply the authorization model above.
+All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/register` and `/auth/login` require `Authorization: Bearer <token>`. Endpoints nested under `/businesses/:businessId/...` apply the authorization model above.
 
 ### Auth (`/auth`)
 
@@ -213,6 +215,14 @@ All endpoints except `GET /`, `GET /health`, `/auth/register` and `/auth/login` 
 | PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. `409` if the new number is already used in this business. |
 | PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — changes only the status, not the content or the PDF |
 | DELETE | `.../invoices/:id` | Also deletes the PDF from disk |
+
+### Legal pages (`/legal`) — public
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/legal/privacy`, `/legal/terms` | No auth. Returns `{ slug, title, version, effectiveDate, language: "en", sections: [{ heading, paragraphs?: string[], bullets?: string[] }] }` — structured plain text (no HTML/markdown) so any client can render it safely. Unknown slug → `404`. Sent with `Cache-Control: public, max-age=300`; still subject to the global rate limit. |
+
+The texts live in `src/legal/content/privacy.ts` and `terms.ts` (no database): update the text, bump `LEGAL_VERSION` / `LEGAL_EFFECTIVE_DATE` in `content/meta.ts`, deploy. Keep the statements in them in step with the code (what is stored, encrypted, logged, which third parties are contacted).
 
 ### Dashboards
 

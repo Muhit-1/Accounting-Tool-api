@@ -16,6 +16,7 @@ import { InvoiceScanModule } from './invoice-scan/invoice-scan.module.js';
 import { ReportModule } from './report/report.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessGrantModule } from './access-grant/access-grant.module.js';
+import { LegalModule } from './legal/legal.module.js';
 import { RateLimitGuard } from './common/rate-limit.guard.js';
 
 @Module({
@@ -37,6 +38,7 @@ import { RateLimitGuard } from './common/rate-limit.guard.js';
     ReportModule,
     DashboardModule,
     AccessGrantModule,
+    LegalModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: RateLimitGuard }],
