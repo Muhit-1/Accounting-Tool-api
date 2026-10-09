@@ -7,13 +7,31 @@ WORKDIR /app
 # Chromium comes from Debian in the runtime stage; Puppeteer's own download
 # does not exist for Linux ARM64 and would only bloat the build.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+# Prisma picks which schema-engine binary to fetch by detecting libssl, so
+# openssl must be here too, or the build could fetch a different target than
+# the runtime stage looks for.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci
+# `prisma migrate deploy` needs the schema-engine binary, which @prisma/engines
+# downloads in its npm postinstall script. npm 11 can skip install scripts, and
+# then Prisma tries to download it at container start — into a node_modules the
+# non-root user cannot write to, so the container crashes. Run the same script
+# explicitly. It fails silently on a download error, hence the explicit check.
+RUN node node_modules/@prisma/engines/scripts/postinstall.js \
+ && engine="$(ls node_modules/@prisma/engines/schema-engine-* 2>/dev/null | head -n 1)" \
+ && [ -n "$engine" ] && [ -x "$engine" ] \
+ && echo "Prisma schema engine present: $engine" \
+ || { echo "ERROR: Prisma schema-engine binary missing or not executable" >&2; exit 1; }
 COPY . .
 # The Prisma client (src/generated/prisma) is gitignored and must exist
 # before `nest build` compiles it into dist/generated.
 RUN npx prisma generate && npm run build
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+ && ls node_modules/@prisma/engines/schema-engine-* >/dev/null \
+ || { echo "ERROR: Prisma schema-engine binary lost after npm prune" >&2; exit 1; }
 
 
 FROM node:24-bookworm-slim
@@ -29,7 +47,7 @@ ENV NODE_ENV=production \
     INVOICE_STORAGE_DIR=/data/invoices \
     RECEIPT_STORAGE_DIR=/data/receipts
 RUN apt-get update \
- && apt-get install -y --no-install-recommends chromium curl ca-certificates fonts-liberation fonts-noto-core \
+ && apt-get install -y --no-install-recommends chromium curl ca-certificates openssl fonts-liberation fonts-noto-core \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/package*.json ./
