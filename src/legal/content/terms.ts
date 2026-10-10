@@ -20,7 +20,7 @@ export const termsOfService: LegalDocument = {
     {
       heading: '2. The service',
       paragraphs: [
-        'Exin Finance is a web application for bookkeeping and invoicing. It lets you manage one or more businesses, record income and expenses, attach invoices and receipts, create invoices as PDF files, view dashboards and reports, share a business with other people, and have an amount, date and counterparty suggested from an uploaded invoice. Optionally, you can connect Google to sign in and to store your files in your own Google Drive.',
+        'Exin Finance is a web application for bookkeeping and invoicing. It lets you manage one or more businesses, record income and expenses, attach invoices and receipts, create invoices as PDF files, view dashboards and reports, share a business with other people, and have an amount, date and counterparty suggested from an uploaded invoice. You sign in with your Google account, and the files the service keeps for you are stored in your own Google Drive.',
         'Exin Finance is an early-stage service. Features can change, be added or be removed. These Terms do not set a price; if paid plans are introduced, they will be agreed with you separately and in advance.',
       ],
     },
@@ -34,7 +34,7 @@ export const termsOfService: LegalDocument = {
       heading: '4. Your account',
       bullets: [
         'Give correct information when you register and keep it up to date.',
-        'Choose a strong password and keep your credentials confidential. Do not share your account; use the sharing function to give other people access.',
+        'You sign in with your Google account, so keep that account secure: anyone who can sign in to it can open your Exin Finance account. Do not share your account; use the sharing function to give other people access.',
         'You are responsible for everything that happens under your account. Tell us at info@sam-trek.com without delay if you suspect it has been compromised.',
       ],
     },
@@ -77,9 +77,9 @@ export const termsOfService: LegalDocument = {
       ],
     },
     {
-      heading: '10. Google Drive integration',
+      heading: '10. Google sign-in and Google Drive',
       paragraphs: [
-        'Connecting Google is optional. If you connect it, files are stored in your own Google Drive, in a folder that Exin Finance creates, and we can access only files and folders that Exin Finance itself creates. Your use of Google is also subject to Google’s own terms. You can disconnect Google in the app and revoke access at any time at https://myaccount.google.com/permissions. We are not responsible for the availability of Google’s services. Details on data handling are in the Privacy Policy.',
+        'Exin Finance requires a Google account and the Google Drive permission described in the Privacy Policy. Files are stored in your own Google Drive, in a folder that Exin Finance creates, and we can access only files and folders that Exin Finance itself creates. Your use of Google is also subject to Google’s own terms. You can revoke access at any time at https://myaccount.google.com/permissions; you can then no longer sign in until you grant it again. We are not responsible for the availability of Google’s services. Details on data handling are in the Privacy Policy.',
       ],
     },
     {

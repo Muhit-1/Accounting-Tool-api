@@ -5,6 +5,9 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { LoginLockoutService } from './login-lockout.service.js';
+import { GoogleAuthController } from './google/google-auth.controller.js';
+import { GoogleAuthService } from './google/google-auth.service.js';
+import { GoogleOAuthClient } from './google/google-oauth.client.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 
 @Module({
@@ -22,8 +25,8 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, LoginLockoutService, JwtStrategy],
+  controllers: [AuthController, GoogleAuthController],
+  providers: [AuthService, LoginLockoutService, JwtStrategy, GoogleAuthService, GoogleOAuthClient],
   exports: [PassportModule, JwtModule],
 })
 export class AuthModule {}

@@ -4,22 +4,26 @@ import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser, type AuthenticatedUser } from './decorators/current-user.decorator.js';
+import { PasswordAuthEnabledGuard } from './guards/password-auth-enabled.guard.js';
 import { RateLimit } from '../common/rate-limit.guard.js';
 
 // Tighter than the app-wide default (100/min) — these two are the ones
 // worth specifically blunting against brute-force/credential-stuffing.
+// Both are 404 unless AUTH_PASSWORD_ENABLED=true; Google is the normal login.
 const AUTH_RATE_LIMIT = { limit: 5, windowMs: 60_000 };
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @UseGuards(PasswordAuthEnabledGuard)
   @RateLimit(AUTH_RATE_LIMIT)
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
+  @UseGuards(PasswordAuthEnabledGuard)
   @RateLimit(AUTH_RATE_LIMIT)
   @Post('login')
   login(@Body() dto: LoginDto) {

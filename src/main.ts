@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
+import { readGoogleConfig } from './auth/google/google-config.js';
 
 const MIN_SECRET_LENGTH = 32;
 
@@ -18,6 +19,13 @@ function assertSecretsConfigured() {
   const encryptionKey = process.env.ENCRYPTION_KEY;
   if (!encryptionKey || Buffer.from(encryptionKey, 'base64').length !== 32) {
     problems.push('ENCRYPTION_KEY must be set to a base64-encoded 32-byte key (see .env.example)');
+  }
+  // Google sign-in is optional at boot (routes answer 503 without it), but a
+  // value that is present and malformed is a deployment mistake — fail here.
+  try {
+    readGoogleConfig(process.env);
+  } catch (error) {
+    problems.push((error as Error).message);
   }
   if (problems.length > 0) {
     throw new Error(`Refusing to start with insecure configuration:\n- ${problems.join('\n- ')}`);

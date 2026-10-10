@@ -55,8 +55,13 @@ export class AuthService {
     return { id: user.id, email: user.email, name: user.name };
   }
 
+  // Also used by the Google login, so both paths issue identical tokens.
+  issueAccessToken(user: { id: string; email: string }): string {
+    return this.jwtService.sign({ sub: user.id, email: user.email });
+  }
+
   private buildAuthResponse(user: { id: string; email: string; name: string }) {
-    const accessToken = this.jwtService.sign({ sub: user.id, email: user.email });
+    const accessToken = this.issueAccessToken(user);
     return {
       accessToken,
       user: { id: user.id, email: user.email, name: user.name },

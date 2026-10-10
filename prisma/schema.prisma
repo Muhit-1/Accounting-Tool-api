@@ -45,13 +45,16 @@ enum AccessPermission {
   EDIT
 }
 
-// A person who can log in. Stage 1: email + password. Stage 2 adds Google login.
+// A person who can log in. Login is Google only (Stage 2); email + password
+// still exists behind AUTH_PASSWORD_ENABLED for local dev and tests.
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String? // Stage 1 (bcrypt). Nullable once Stage 2 Google-only accounts exist.
-  googleId     String?  @unique // Stage 2
-  name         String
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  passwordHash          String? // bcrypt; null for Google-created accounts
+  googleSub             String?  @unique // Google's stable account id (the ID token's `sub`)
+  // Google refresh token, AES-256-GCM encrypted via EncryptionService (never plaintext).
+  googleRefreshTokenEnc String?  @db.Text
+  name                  String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

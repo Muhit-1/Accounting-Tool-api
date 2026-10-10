@@ -33,7 +33,7 @@ describe('Legal endpoints (public)', () => {
     expect(res.body).toMatchObject({
       slug,
       title,
-      version: '1.0',
+      version: '1.1',
       effectiveDate: '2026-10-10',
       language: 'en',
     });
@@ -68,8 +68,23 @@ describe('Legal endpoints (public)', () => {
   it('contains the Google Limited Use statement and the operator details', async () => {
     const privacy = (await request(app.getHttpServer()).get('/legal/privacy')).body;
     const text = JSON.stringify(privacy);
-    expect(text).toContain('Google API Services User Data Policy, including the Limited Use requirements');
+    expect(text).toContain(
+      "Exin Finance's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements.",
+    );
     expect(text).toContain('https://www.googleapis.com/auth/drive.file');
     expect(text).toContain('HRB 309076');
+  });
+
+  it('describes Google sign-in, the required drive.file scope and the encrypted refresh token', async () => {
+    const privacy = (await request(app.getHttpServer()).get('/legal/privacy')).body;
+    const text = JSON.stringify(privacy);
+    expect(text).toContain('only way to sign in');
+    expect(text).toContain('This permission is required');
+    expect(text).toContain('keeps your invoice PDFs and receipts only there');
+    expect(text).toContain('refresh token');
+    expect(text).toContain('AES-256-GCM');
+    // No claim that survived from the pre-Google text.
+    expect(text).not.toContain('does not set cookies');
+    expect(text).not.toContain('bcrypt hashes');
   });
 });
