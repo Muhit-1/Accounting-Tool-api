@@ -167,7 +167,7 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/google`,
 | GET | `.../accounts` | — |
 | GET | `.../accounts/:id` | — |
 | PATCH | `.../accounts/:id` | `{ name }` |
-| DELETE | `.../accounts/:id` | Also deletes its transactions |
+| DELETE | `.../accounts/:id` | `409` if the account still has entries — move or delete them first (their receipt files are cleaned up by the entry delete) |
 
 ### Categories (`/businesses/:businessId/categories`)
 
@@ -183,7 +183,7 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/google`,
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `.../transactions` | `{ accountId, date, memo?, counterparty?, categoryId?, amount (positive), type: "INCOME" \| "EXPENSE" }` — `categoryId`, if given, must belong to the business and match `type` |
+| POST | `.../transactions` | `{ accountId, date, memo?, counterparty?, categoryId?, amount (positive), type: "INCOME" \| "EXPENSE" }` — `categoryId`, if given, must belong to the business and match `type`. `date` must be 2000-01-01 or later and no more than a day ahead of the server clock (`400` otherwise); an edit that leaves the date unchanged is not re-checked |
 | GET | `.../transactions?accountId=` | — returns entries in date order, each with a `runningBalance`; `accountId` filters to one account |
 | GET | `.../transactions/balance` | — `{ totalIncome, totalExpense, balance }` |
 | GET | `.../transactions/:id` | — |
@@ -216,9 +216,9 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/google`,
 | GET | `.../invoices` | — |
 | GET | `.../invoices/:id` | — includes line items and client |
 | GET | `.../invoices/:id/pdf` | — streams the generated PDF as an attachment |
-| PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. The PDF is rendered first and the database only changes if that succeeds, so a failed render leaves the invoice and its old PDF untouched. `409` if the new number is already used in this business. |
-| PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — changes only the status, not the content or the PDF |
-| DELETE | `.../invoices/:id` | Also deletes the PDF from disk |
+| PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. The PDF is rendered first and the database only changes if that succeeds, so a failed render leaves the invoice and its old PDF untouched. `409` if the new number is already used in this business, or if the invoice is not a `DRAFT` (sent invoices are records — cancel and re-issue). `400` if `dueDate` is before `issueDate` (also on create). |
+| PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — changes only the status, not the content or the PDF. Allowed moves: `DRAFT`→`SENT`/`CANCELLED`; `SENT`→`PAID`/`OVERDUE`/`CANCELLED`; `OVERDUE`→`PAID`/`SENT`/`CANCELLED`; `PAID`→`SENT`; `CANCELLED` is final. Anything else is `409`. Marking an invoice paid does **not** create an income entry. |
+| DELETE | `.../invoices/:id` | Only `DRAFT` or `CANCELLED` invoices (`409` otherwise); also deletes the PDF from disk |
 
 ### Legal pages (`/legal`) — public
 

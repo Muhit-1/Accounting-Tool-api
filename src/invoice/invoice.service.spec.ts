@@ -1,6 +1,6 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { InvoiceService } from './invoice.service.js';
-import { AccessPermission, Prisma } from '../generated/prisma/client.js';
+import { AccessPermission, InvoiceStatus, Prisma } from '../generated/prisma/client.js';
 
 const STAGED = { stagedPath: '/data/invoices/biz1/inv1.pdf.abc.tmp', finalPath: '/data/invoices/biz1/inv1.pdf' };
 
@@ -15,6 +15,7 @@ function setup() {
     businessId: 'biz1',
     clientId: 'client1',
     number: '100',
+    status: InvoiceStatus.DRAFT as InvoiceStatus,
     issueDate: new Date('2026-08-01'),
     terms: 'Due end of month',
     dueDate: new Date('2026-08-31'),
@@ -30,7 +31,11 @@ function setup() {
     invoice: { update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...existing, ...data, items: [] })) },
   };
   const prisma = {
-    invoice: { findUnique: vi.fn().mockResolvedValue(existing) },
+    invoice: {
+      findUnique: vi.fn().mockResolvedValue(existing),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...existing, ...data, total: 50, subTotal: 50 })),
+      delete: vi.fn(),
+    },
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => {
       calls.push('db');
       return fn(tx);
@@ -45,6 +50,7 @@ function setup() {
     }),
   };
   const storageService = {
+    remove: vi.fn(),
     stage: vi.fn(async () => {
       calls.push('stage');
       return STAGED;
@@ -128,4 +134,83 @@ describe('InvoiceService.update', () => {
     );
     expect(storageService.discard).toHaveBeenCalled();
   });
+});
+
+describe('InvoiceService.update — locking and dates', () => {
+  it.each([InvoiceStatus.SENT, InvoiceStatus.PAID, InvoiceStatus.OVERDUE, InvoiceStatus.CANCELLED])(
+    'refuses to edit a %s invoice and leaves its PDF alone',
+    async (status) => {
+      const { service, existing, pdfService, storageService } = setup();
+      existing.status = status;
+
+      await expect(service.update('user1', 'biz1', 'inv1', dto as never)).rejects.toThrow(ConflictException);
+
+      expect(pdfService.render).not.toHaveBeenCalled();
+      expect(storageService.stage).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a due date before the issue date', async () => {
+    const { service } = setup();
+
+    await expect(
+      service.update('user1', 'biz1', 'inv1', { dueDate: '2026-07-01' } as never),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('InvoiceService.updateStatus', () => {
+  it('allows a normal step forward', async () => {
+    const { service, prisma } = setup();
+
+    await service.updateStatus('user1', 'biz1', 'inv1', InvoiceStatus.SENT);
+
+    expect(prisma.invoice.update).toHaveBeenCalledWith({ where: { id: 'inv1' }, data: { status: InvoiceStatus.SENT } });
+  });
+
+  it.each([
+    [InvoiceStatus.DRAFT, InvoiceStatus.PAID],
+    [InvoiceStatus.CANCELLED, InvoiceStatus.PAID],
+    [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT],
+    [InvoiceStatus.PAID, InvoiceStatus.CANCELLED],
+  ])('rejects %s -> %s', async (from, to) => {
+    const { service, existing, prisma } = setup();
+    existing.status = from;
+
+    await expect(service.updateStatus('user1', 'biz1', 'inv1', to)).rejects.toThrow(ConflictException);
+
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it('lets a paid invoice go back to sent to undo a mis-click', async () => {
+    const { service, existing } = setup();
+    existing.status = InvoiceStatus.PAID;
+
+    await expect(service.updateStatus('user1', 'biz1', 'inv1', InvoiceStatus.SENT)).resolves.toBeDefined();
+  });
+});
+
+describe('InvoiceService.remove', () => {
+  it.each([InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED])('deletes a %s invoice and its file', async (status) => {
+    const { service, existing, prisma, storageService } = setup();
+    existing.status = status;
+
+    await service.remove('user1', 'biz1', 'inv1');
+
+    expect(storageService.remove).toHaveBeenCalledWith(STAGED.finalPath);
+    expect(prisma.invoice.delete).toHaveBeenCalledWith({ where: { id: 'inv1' } });
+  });
+
+  it.each([InvoiceStatus.SENT, InvoiceStatus.PAID, InvoiceStatus.OVERDUE])(
+    'refuses to delete a %s invoice',
+    async (status) => {
+      const { service, existing, prisma, storageService } = setup();
+      existing.status = status;
+
+      await expect(service.remove('user1', 'biz1', 'inv1')).rejects.toThrow(ConflictException);
+
+      expect(storageService.remove).not.toHaveBeenCalled();
+      expect(prisma.invoice.delete).not.toHaveBeenCalled();
+    },
+  );
 });

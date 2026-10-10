@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { ClientService } from '../client/client.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,6 +9,13 @@ import { UpdateInvoiceDto } from './dto/update-invoice.dto.js';
 import { InvoicePdfService } from './pdf/invoice-pdf.service.js';
 import type { InvoiceHtmlItem } from './pdf/invoice-template.js';
 import { InvoiceStorageService } from './pdf/invoice-storage.service.js';
+import { canTransition, isDeletable, isEditable } from './invoice-status.js';
+
+function assertDueDateNotBeforeIssueDate(issueDate: Date, dueDate: Date) {
+  if (dueDate.getTime() < issueDate.getTime()) {
+    throw new BadRequestException('The due date cannot be before the issue date');
+  }
+}
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -101,6 +108,7 @@ export class InvoiceService {
   async create(userId: string, businessId: string, dto: CreateInvoiceDto) {
     const business = await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const client = await this.clientService.findOneForBusiness(userId, businessId, dto.clientId);
+    assertDueDateNotBeforeIssueDate(new Date(dto.issueDate), new Date(dto.dueDate));
 
     const items = dto.items.map((item) => ({
       description: item.description,
@@ -192,6 +200,11 @@ export class InvoiceService {
   async update(userId: string, businessId: string, id: string, dto: UpdateInvoiceDto) {
     const business = await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const existing = await this.findInvoiceWithItemsAndClient(businessId, id);
+    if (!isEditable(existing.status)) {
+      throw new ConflictException(
+        'Only draft invoices can be edited. Cancel this invoice and issue a new one instead.',
+      );
+    }
 
     const client = dto.clientId
       ? await this.clientService.findOneForBusiness(userId, businessId, dto.clientId)
@@ -215,6 +228,7 @@ export class InvoiceService {
     const issueDate = dto.issueDate ? new Date(dto.issueDate) : existing.issueDate;
     const terms = dto.terms ?? existing.terms;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : existing.dueDate;
+    assertDueDateNotBeforeIssueDate(issueDate, dueDate);
 
     // Order matters: render and stage the PDF BEFORE touching the database, so
     // a Chromium failure or timeout leaves both the invoice and its PDF exactly
@@ -305,7 +319,10 @@ export class InvoiceService {
 
   async updateStatus(userId: string, businessId: string, id: string, status: InvoiceStatus) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
-    await this.findInvoiceInBusiness(businessId, id);
+    const invoice = await this.findInvoiceInBusiness(businessId, id);
+    if (!canTransition(invoice.status, status)) {
+      throw new ConflictException(`An invoice that is ${invoice.status.toLowerCase()} cannot be changed to ${status.toLowerCase()}`);
+    }
     const updated = await this.prisma.invoice.update({ where: { id }, data: { status } });
     return serializeTotals(updated);
   }
@@ -313,6 +330,9 @@ export class InvoiceService {
   async remove(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const invoice = await this.findInvoiceInBusiness(businessId, id);
+    if (!isDeletable(invoice.status)) {
+      throw new ConflictException('Only draft or cancelled invoices can be deleted. Cancel this invoice first.');
+    }
     if (invoice.fileReference) {
       await this.storageService.remove(invoice.fileReference);
     }

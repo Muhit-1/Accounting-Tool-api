@@ -1,3 +1,5 @@
+import { addMoney } from './money.js';
+
 export interface MoneyTotals {
   totalIncome: number;
   totalExpense: number;
@@ -21,9 +23,9 @@ export function totalsByCurrency(items: Array<MoneyTotals & { currency: string }
   const groups = new Map<string, CurrencyTotals>();
   for (const item of items) {
     const group = groups.get(item.currency) ?? { currency: item.currency, totalIncome: 0, totalExpense: 0, balance: 0 };
-    group.totalIncome += item.totalIncome;
-    group.totalExpense += item.totalExpense;
-    group.balance += item.balance;
+    group.totalIncome = addMoney(group.totalIncome, item.totalIncome);
+    group.totalExpense = addMoney(group.totalExpense, item.totalExpense);
+    group.balance = addMoney(group.balance, item.balance);
     groups.set(item.currency, group);
   }
   return [...groups.values()].map((group) => ({

@@ -3,6 +3,7 @@ import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, LineDirection } from '../generated/prisma/client.js';
 import { totalsByCurrency } from '../common/currency-totals.js';
+import { addMoney, subMoney } from '../common/money.js';
 
 export interface CategoryBreakdown {
   categoryId: string | null;
@@ -29,11 +30,11 @@ export class DashboardService {
       (acc, line) => {
         const amount = Number(line.amount);
         if (line.direction === LineDirection.CREDIT) {
-          acc.totalIncome += amount;
+          acc.totalIncome = addMoney(acc.totalIncome, amount);
         } else {
-          acc.totalExpense += amount;
+          acc.totalExpense = addMoney(acc.totalExpense, amount);
         }
-        acc.balance = acc.totalIncome - acc.totalExpense;
+        acc.balance = subMoney(acc.totalIncome, acc.totalExpense);
         return acc;
       },
       { totalIncome: 0, totalExpense: 0, balance: 0 },
@@ -55,7 +56,7 @@ export class DashboardService {
       const existing = buckets.get(key);
       const amount = Number(line.amount);
       if (existing) {
-        existing.total += amount;
+        existing.total = addMoney(existing.total, amount);
       } else {
         buckets.set(key, { categoryId: line.categoryId, categoryName: name, total: amount });
       }
@@ -85,9 +86,9 @@ export class DashboardService {
 
     const combined = perBusiness.reduce<BusinessTotals>(
       (acc, b) => {
-        acc.totalIncome += b.totalIncome;
-        acc.totalExpense += b.totalExpense;
-        acc.balance += b.balance;
+        acc.totalIncome = addMoney(acc.totalIncome, b.totalIncome);
+        acc.totalExpense = addMoney(acc.totalExpense, b.totalExpense);
+        acc.balance = addMoney(acc.balance, b.balance);
         return acc;
       },
       { totalIncome: 0, totalExpense: 0, balance: 0 },

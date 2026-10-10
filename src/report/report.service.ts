@@ -6,6 +6,7 @@ import { ReportQueryDto } from './dto/report-query.dto.js';
 import { ReportPdfService } from './pdf/report-pdf.service.js';
 import type { ReportPdfData, ReportPdfSection } from './pdf/report-template.js';
 import { totalsByCurrency } from '../common/currency-totals.js';
+import { addMoney, subMoney } from '../common/money.js';
 
 export interface ReportCategoryBreakdown {
   categoryId: string | null;
@@ -60,9 +61,9 @@ function toReportTransactions(transactions: TxWithLines[]): ReportTransaction[] 
 function computeTotals(transactions: ReportTransaction[]): ReportTotals {
   return transactions.reduce<ReportTotals>(
     (acc, tx) => {
-      if (tx.type === CategoryType.INCOME) acc.totalIncome += tx.amount;
-      else acc.totalExpense += tx.amount;
-      acc.balance = acc.totalIncome - acc.totalExpense;
+      if (tx.type === CategoryType.INCOME) acc.totalIncome = addMoney(acc.totalIncome, tx.amount);
+      else acc.totalExpense = addMoney(acc.totalExpense, tx.amount);
+      acc.balance = subMoney(acc.totalIncome, acc.totalExpense);
       return acc;
     },
     { totalIncome: 0, totalExpense: 0, balance: 0 },
@@ -76,7 +77,7 @@ function computeCategoryBreakdown(transactions: ReportTransaction[]): ReportCate
     const name = tx.categoryName ?? `Uncategorized ${tx.type.toLowerCase()}`;
     const existing = buckets.get(key);
     if (existing) {
-      existing.total += tx.amount;
+      existing.total = addMoney(existing.total, tx.amount);
     } else {
       buckets.set(key, { categoryId: null, categoryName: name, type: tx.type, total: tx.amount });
     }
@@ -168,9 +169,9 @@ export class ReportService {
 
     const combinedTotals = perBusiness.reduce<ReportTotals>(
       (acc, b) => {
-        acc.totalIncome += b.totals.totalIncome;
-        acc.totalExpense += b.totals.totalExpense;
-        acc.balance += b.totals.balance;
+        acc.totalIncome = addMoney(acc.totalIncome, b.totals.totalIncome);
+        acc.totalExpense = addMoney(acc.totalExpense, b.totals.totalExpense);
+        acc.balance = addMoney(acc.balance, b.totals.balance);
         return acc;
       },
       { totalIncome: 0, totalExpense: 0, balance: 0 },

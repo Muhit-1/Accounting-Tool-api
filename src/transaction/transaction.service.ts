@@ -6,6 +6,8 @@ import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
 import { ReceiptStorageService } from './receipt-storage.service.js';
 import { matchesFileSignature } from '../common/file-signature.js';
+import { addMoney, subMoney } from '../common/money.js';
+import { assertPlausibleEntryDate } from '../common/entry-date.js';
 
 const ALLOWED_RECEIPT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
@@ -87,6 +89,7 @@ export class TransactionService {
 
   async create(userId: string, businessId: string, dto: CreateTransactionDto) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    const date = assertPlausibleEntryDate(dto.date);
     await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     if (dto.categoryId) {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, dto.type);
@@ -96,7 +99,7 @@ export class TransactionService {
       data: {
         businessId,
         accountId: dto.accountId,
-        date: new Date(dto.date),
+        date,
         memo: dto.memo,
         counterparty: dto.counterparty,
         lines: {
@@ -127,7 +130,8 @@ export class TransactionService {
     let runningBalance = 0;
     return transactions.map((tx) => {
       const entry = toResponse(tx);
-      runningBalance += entry.type === CategoryType.INCOME ? entry.amount : -entry.amount;
+      runningBalance =
+        entry.type === CategoryType.INCOME ? addMoney(runningBalance, entry.amount) : subMoney(runningBalance, entry.amount);
       return { ...entry, runningBalance };
     });
   }
@@ -160,6 +164,10 @@ export class TransactionService {
       throw new ForbiddenException('This transaction does not belong to that business');
     }
 
+    // An edit form re-sends the date untouched; only a changed date is vetted,
+    // so entries saved before this rule existed stay editable.
+    const dateChanged = dto.date !== undefined && new Date(dto.date).getTime() !== existing.date.getTime();
+    const date = dto.date && dateChanged ? assertPlausibleEntryDate(dto.date) : undefined;
     const line = existing.lines[0];
     const nextType = dto.type ?? typeForDirection(line.direction);
     if (dto.categoryId) {
@@ -179,7 +187,7 @@ export class TransactionService {
       where: { id },
       data: {
         accountId: dto.accountId,
-        date: dto.date ? new Date(dto.date) : undefined,
+        date,
         memo: dto.memo,
         counterparty: dto.counterparty,
         lines: {
@@ -272,9 +280,9 @@ export class TransactionService {
       (acc, l) => {
         const amount = Number(l.amount);
         if (l.direction === LineDirection.CREDIT) {
-          acc.totalIncome += amount;
+          acc.totalIncome = addMoney(acc.totalIncome, amount);
         } else {
-          acc.totalExpense += amount;
+          acc.totalExpense = addMoney(acc.totalExpense, amount);
         }
         return acc;
       },
@@ -284,7 +292,7 @@ export class TransactionService {
     return {
       totalIncome: totals.totalIncome,
       totalExpense: totals.totalExpense,
-      balance: totals.totalIncome - totals.totalExpense,
+      balance: subMoney(totals.totalIncome, totals.totalExpense),
     };
   }
 }

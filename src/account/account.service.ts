@@ -1,5 +1,6 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
+import { addMoney, subMoney } from '../common/money.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, LineDirection } from '../generated/prisma/client.js';
 import { CreateAccountDto } from './dto/create-account.dto.js';
@@ -18,11 +19,11 @@ export class AccountService {
       (acc, line) => {
         const amount = Number(line.amount);
         if (line.direction === LineDirection.CREDIT) {
-          acc.totalIncome += amount;
+          acc.totalIncome = addMoney(acc.totalIncome, amount);
         } else {
-          acc.totalExpense += amount;
+          acc.totalExpense = addMoney(acc.totalExpense, amount);
         }
-        acc.balance = acc.totalIncome - acc.totalExpense;
+        acc.balance = subMoney(acc.totalIncome, acc.totalExpense);
         return acc;
       },
       { totalIncome: 0, totalExpense: 0, balance: 0 },
@@ -71,6 +72,15 @@ export class AccountService {
   async remove(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     await this.findAccountInBusiness(businessId, id);
+    // Transactions cascade-delete with their account, and that cascade would
+    // also orphan their receipt files on disk. Refuse instead: the user moves
+    // or deletes the entries first (each delete cleans up its own file).
+    const entryCount = await this.prisma.transaction.count({ where: { accountId: id } });
+    if (entryCount > 0) {
+      throw new ConflictException(
+        `This account still has ${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}. Move or delete them before deleting the account.`,
+      );
+    }
     await this.prisma.account.delete({ where: { id } });
     return { id };
   }
