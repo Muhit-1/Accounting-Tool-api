@@ -4,6 +4,7 @@ import bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 
 const SALT_ROUNDS = 12;
 
@@ -17,6 +18,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly loginLockout: LoginLockoutService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -34,12 +36,17 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    // Before the (slow) password check, and for unknown emails too, so a lock
+    // reveals nothing about which accounts exist.
+    this.loginLockout.assertNotLocked(dto.email);
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     const passwordMatches = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
     if (!user || !user.passwordHash || !passwordMatches) {
+      this.loginLockout.recordFailure(dto.email);
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    this.loginLockout.recordSuccess(dto.email);
     return this.buildAuthResponse(user);
   }
 

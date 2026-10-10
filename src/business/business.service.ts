@@ -108,6 +108,20 @@ export class BusinessService {
     return { id };
   }
 
+  // The only shape a business may leave the API in for GET /businesses/:id.
+  // assertAccess hands back decrypted bank numbers (the invoice PDF needs
+  // them), but a VIEW/EDIT collaborator is given the books, not the owner's
+  // payment details — so for anyone but the owner the three encrypted fields
+  // are blanked here, at the response edge. They stay present as null so the
+  // JSON shape the frontend (and any second app) relies on doesn't change.
+  async findOneForViewer(userId: string, businessId: string) {
+    const business = await this.assertAccess(userId, businessId, AccessPermission.VIEW);
+    if (business.ownerId === userId) {
+      return business;
+    }
+    return { ...business, bankAccountNumber: null, bankRoutingNumber: null, bankSwiftCode: null };
+  }
+
   // Used by the data modules nested under a business (categories,
   // transactions, clients, invoices, dashboard, reports) — unlike
   // findOneForOwner, this also allows a collaborator with an active,

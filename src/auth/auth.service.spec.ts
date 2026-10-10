@@ -1,6 +1,7 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import bcrypt from 'bcrypt';
 import { AuthService } from './auth.service.js';
+import { LoginLockoutService } from './login-lockout.service.js';
 
 function createPrismaMock() {
   return { user: { findUnique: vi.fn(), create: vi.fn() } };
@@ -18,7 +19,7 @@ describe('AuthService', () => {
   beforeEach(() => {
     prisma = createPrismaMock();
     jwt = createJwtMock();
-    service = new AuthService(prisma as never, jwt as never);
+    service = new AuthService(prisma as never, jwt as never, new LoginLockoutService());
   });
 
   describe('register', () => {

@@ -216,55 +216,91 @@ export class InvoiceService {
     const terms = dto.terms ?? existing.terms;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : existing.dueDate;
 
-    let updated;
+    // Order matters: render and stage the PDF BEFORE touching the database, so
+    // a Chromium failure or timeout leaves both the invoice and its PDF exactly
+    // as they were. Only once the database accepts the new content is the
+    // staged file moved into place.
+    const pdf = await this.pdfService.render({
+      business: toBusinessPdfData(business),
+      client: { name: client.name, address: client.address },
+      invoice: { number, issueDate, terms, dueDate, subTotal, total },
+      items: items.map((item): InvoiceHtmlItem => ({ ...item })),
+    });
+    const staged = await this.storageService.stage(businessId, id, pdf);
+
+    let saved;
     try {
-      updated = await this.prisma.$transaction(async (tx) => {
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
-        return tx.invoice.update({
-          where: { id },
-          data: {
-            clientId: client.id,
-            number,
-            issueDate,
-            terms,
-            dueDate,
-            subTotal,
-            total,
-            items: { create: items.map((item, position) => ({ ...item, position })) },
-          },
-          include: { items: true },
-        });
+      saved = await this.writeContent(id, {
+        clientId: client.id,
+        number,
+        issueDate,
+        terms,
+        dueDate,
+        subTotal,
+        total,
+        items,
+        fileReference: staged.finalPath,
       });
     } catch (error) {
+      await this.storageService.discard(staged).catch(() => undefined);
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('That invoice number is already in use');
       }
       throw error;
     }
 
-    const pdf = await this.pdfService.render({
-      business: toBusinessPdfData(business),
-      client: { name: client.name, address: client.address },
-      invoice: {
-        number: updated.number,
-        issueDate: updated.issueDate,
-        terms: updated.terms,
-        dueDate: updated.dueDate,
-        subTotal: Number(updated.subTotal),
-        total: Number(updated.total),
-      },
-      items: items.map((item): InvoiceHtmlItem => ({ ...item })),
-    });
+    try {
+      await this.storageService.commit(staged);
+    } catch (error) {
+      // The row now holds the new content but the old PDF is still in place —
+      // put the old content back rather than leave them disagreeing.
+      await this.writeContent(id, {
+        clientId: existing.clientId,
+        number: existing.number,
+        issueDate: existing.issueDate,
+        terms: existing.terms,
+        dueDate: existing.dueDate,
+        subTotal: Number(existing.subTotal),
+        total: Number(existing.total),
+        items: existing.items.map((item) => ({
+          description: item.description,
+          quantity: Number(item.quantity),
+          rate: Number(item.rate),
+          amount: Number(item.amount),
+        })),
+        fileReference: existing.fileReference,
+      }).catch(() => undefined);
+      await this.storageService.discard(staged).catch(() => undefined);
+      throw error;
+    }
 
-    // Same invoiceId → same on-disk path, so this overwrites the old PDF.
-    const fileReference = await this.storageService.save(businessId, id, pdf);
-
-    const saved = await this.prisma.invoice.update({
-      where: { id },
-      data: { fileReference },
-      include: { items: true, client: true },
-    });
     return { ...serializeTotals(saved), items: serializeItems(saved.items) };
+  }
+
+  // Replaces an invoice's items and header fields atomically.
+  private writeContent(
+    id: string,
+    content: {
+      clientId: string;
+      number: string;
+      issueDate: Date;
+      terms: string;
+      dueDate: Date;
+      subTotal: number;
+      total: number;
+      items: Array<{ description: string; quantity: number; rate: number; amount: number }>;
+      fileReference: string | null;
+    },
+  ) {
+    const { items, ...fields } = content;
+    return this.prisma.$transaction(async (tx) => {
+      await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+      return tx.invoice.update({
+        where: { id },
+        data: { ...fields, items: { create: items.map((item, position) => ({ ...item, position })) } },
+        include: { items: true, client: true },
+      });
+    });
   }
 
   async updateStatus(userId: string, businessId: string, id: string, status: InvoiceStatus) {

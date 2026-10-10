@@ -5,6 +5,7 @@ import { AccessPermission, CategoryType, LineDirection } from '../generated/pris
 import { ReportQueryDto } from './dto/report-query.dto.js';
 import { ReportPdfService } from './pdf/report-pdf.service.js';
 import type { ReportPdfData, ReportPdfSection } from './pdf/report-template.js';
+import { totalsByCurrency } from '../common/currency-totals.js';
 
 export interface ReportCategoryBreakdown {
   categoryId: string | null;
@@ -175,6 +176,8 @@ export class ReportService {
       { totalIncome: 0, totalExpense: 0, balance: 0 },
     );
 
+    const byCurrency = totalsByCurrency(perBusiness.map((b) => ({ currency: b.business.currency, ...b.totals })));
+
     const transactions = perBusiness
       .flatMap((b) => b.transactions)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -183,6 +186,10 @@ export class ReportService {
       period: { from: dto.from, to: dto.to },
       businesses: perBusiness.map(({ business, totals, byCategory }) => ({ business, totals, byCategory })),
       combinedTotals,
+      // combinedTotals is a plain sum, only meaningful with a single currency;
+      // see totalsByCurrency for why the honest figures are per currency.
+      byCurrency,
+      mixedCurrencies: byCurrency.length > 1,
       transactions,
     };
   }

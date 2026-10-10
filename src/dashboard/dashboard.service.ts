@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, LineDirection } from '../generated/prisma/client.js';
+import { totalsByCurrency } from '../common/currency-totals.js';
 
 export interface CategoryBreakdown {
   categoryId: string | null;
@@ -92,6 +93,11 @@ export class DashboardService {
       { totalIncome: 0, totalExpense: 0, balance: 0 },
     );
 
-    return { businesses: perBusiness, combined };
+    // `combined` keeps its old meaning (a plain sum) so existing clients don't
+    // break, but it is only meaningful when every business shares a currency.
+    // `byCurrency` / `mixedCurrencies` let clients show honest per-currency
+    // totals instead.
+    const byCurrency = totalsByCurrency(perBusiness);
+    return { businesses: perBusiness, combined, byCurrency, mixedCurrencies: byCurrency.length > 1 };
   }
 }

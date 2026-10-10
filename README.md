@@ -142,7 +142,7 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/register
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | POST | `/auth/register` | `{ email, password (min 8 chars), name }` | Returns `{ accessToken, user }` |
-| POST | `/auth/login` | `{ email, password }` | Returns `{ accessToken, user }` |
+| POST | `/auth/login` | `{ email, password }` | Returns `{ accessToken, user }`. After 5 failed attempts for an email (registered or not) within 15 minutes, that email is locked for 15 minutes (`429`), on top of the per-IP limit. In memory, so it resets on restart. |
 | GET | `/auth/me` | — | Returns the current user's profile |
 
 ### Businesses (`/businesses`) — owner-only
@@ -151,7 +151,7 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/register
 |---|---|---|
 | POST | `/businesses` | `{ name, currency?, logoUrl?, address?, contactEmail?, website?, bankAccountName?, bankAccountNumber?, bankRoutingNumber?, bankSwiftCode?, bankBranch?, defaultTerms? }` |
 | GET | `/businesses` | — (lists businesses you own) |
-| GET | `/businesses/:id` | — |
+| GET | `/businesses/:id` | — (also readable by collaborators with a VIEW/EDIT grant; for them `bankAccountNumber`, `bankRoutingNumber` and `bankSwiftCode` are returned as `null`) |
 | PATCH | `/businesses/:id` | any subset of the create fields |
 | DELETE | `/businesses/:id` | — |
 
@@ -212,7 +212,7 @@ All endpoints except `GET /`, `GET /health`, `GET /legal/:slug`, `/auth/register
 | GET | `.../invoices` | — |
 | GET | `.../invoices/:id` | — includes line items and client |
 | GET | `.../invoices/:id/pdf` | — streams the generated PDF as an attachment |
-| PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. `409` if the new number is already used in this business. |
+| PATCH | `.../invoices/:id` | any subset of the create fields (`clientId`, `number`, `issueDate`, `terms`, `dueDate`, `items`) — edits the invoice content, recomputes the totals and **regenerates the PDF**, overwriting the old file. The PDF is rendered first and the database only changes if that succeeds, so a failed render leaves the invoice and its old PDF untouched. `409` if the new number is already used in this business. |
 | PATCH | `.../invoices/:id/status` | `{ status: "DRAFT" \| "SENT" \| "PAID" \| "OVERDUE" \| "CANCELLED" }` — changes only the status, not the content or the PDF |
 | DELETE | `.../invoices/:id` | Also deletes the PDF from disk |
 
@@ -229,7 +229,7 @@ The texts live in `src/legal/content/privacy.ts` and `terms.ts` (no database): u
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/businesses/:businessId/dashboard` | `{ totalIncome, totalExpense, balance, byCategory: [...] }` for one business |
-| GET | `/dashboard` | Combined totals across every business you own, plus a per-business breakdown. Amounts are summed as-is, **not currency-converted** — multi-currency support is deferred (see below) |
+| GET | `/dashboard` | Totals across every business you own, plus a per-business breakdown. `combined` is a plain sum and only meaningful when every business shares a currency; `byCurrency` (`[{ currency, totalIncome, totalExpense, balance }]`) and `mixedCurrencies` give the honest per-currency totals. Nothing is currency-converted — multi-currency conversion is deferred (see below) |
 
 ### Reports
 
@@ -237,7 +237,7 @@ The texts live in `src/legal/content/privacy.ts` and `terms.ts` (no database): u
 |---|---|---|---|
 | GET | `/businesses/:businessId/reports` | `from`, `to` (`YYYY-MM-DD`, required), `accountId?` | Totals, category breakdown, and the full transaction list for the date range, optionally narrowed to one account |
 | GET | `/businesses/:businessId/reports/pdf` | same | Same report as a downloadable PDF |
-| GET | `/reports` | `from`, `to` | Combined report across every business you own, with a per-business breakdown |
+| GET | `/reports` | `from`, `to` | Combined report across every business you own, with a per-business breakdown. `combinedTotals` is a plain sum; use `byCurrency` / `mixedCurrencies` when businesses use different currencies (not converted) |
 | GET | `/reports/pdf` | same | Combined report as a downloadable PDF |
 
 ### Sharing (`/businesses/:businessId/access-grants`, `/shared-with-me`) — owner-only to manage

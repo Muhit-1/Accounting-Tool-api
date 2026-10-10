@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { isSafeId } from '../../common/safe-id.js';
 
@@ -30,6 +31,31 @@ export class InvoiceStorageService {
     await mkdir(join(this.baseDir, businessId), { recursive: true });
     await writeFile(filePath, pdf);
     return filePath;
+  }
+
+  // Edits are saved in two steps so the database and the file can't disagree:
+  // stage() writes the new PDF next to the real one, the caller then commits
+  // the database change, and only then does commit() move it over the old
+  // file (a same-directory rename, which is effectively atomic). If anything
+  // fails before commit(), discard() leaves the old PDF untouched.
+  async stage(businessId: string, invoiceId: string, pdf: Buffer): Promise<{ stagedPath: string; finalPath: string }> {
+    const finalPath = this.pathFor(businessId, invoiceId);
+    const stagedPath = `${finalPath}.${randomUUID()}.tmp`;
+    await mkdir(join(this.baseDir, businessId), { recursive: true });
+    await writeFile(stagedPath, pdf);
+    return { stagedPath, finalPath };
+  }
+
+  async commit(staged: { stagedPath: string; finalPath: string }): Promise<void> {
+    // Only ever promotes a file stage() created for this very path.
+    if (!staged.stagedPath.startsWith(`${staged.finalPath}.`) || !staged.stagedPath.endsWith('.tmp')) {
+      throw new InternalServerErrorException('Invalid staged file');
+    }
+    await rename(staged.stagedPath, staged.finalPath);
+  }
+
+  async discard(staged: { stagedPath: string }): Promise<void> {
+    await rm(staged.stagedPath, { force: true });
   }
 
   async read(filePath: string): Promise<Buffer> {

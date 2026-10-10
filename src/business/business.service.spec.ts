@@ -101,3 +101,73 @@ describe('BusinessService.assertAccess', () => {
     expect(where.permission).toBeUndefined();
   });
 });
+
+describe('BusinessService.findOneForViewer', () => {
+  let service: BusinessService;
+  let prisma: ReturnType<typeof createPrismaMock>;
+
+  const business = {
+    id: 'biz1',
+    ownerId: 'owner1',
+    name: 'Test Co',
+    bankAccountName: 'Test Co Ltd',
+    bankBranch: 'Main branch',
+    bankAccountNumber: '1234567890',
+    bankRoutingNumber: '987654321',
+    bankSwiftCode: 'TESTBDDH',
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    service = new BusinessService(prisma as never, createEncryptionServiceMock() as never);
+    prisma.business.findUnique.mockResolvedValue(business);
+  });
+
+  it('gives the owner the decrypted bank numbers', async () => {
+    const result = await service.findOneForViewer('owner1', 'biz1');
+
+    expect(result).toMatchObject({
+      bankAccountNumber: '1234567890',
+      bankRoutingNumber: '987654321',
+      bankSwiftCode: 'TESTBDDH',
+    });
+  });
+
+  it('withholds the bank numbers from a VIEW collaborator but keeps the response shape', async () => {
+    prisma.accessGrant.findFirst.mockResolvedValue({ id: 'g1', permission: AccessPermission.VIEW });
+
+    const result = await service.findOneForViewer('grantee1', 'biz1');
+
+    expect(result).toMatchObject({
+      id: 'biz1',
+      name: 'Test Co',
+      bankAccountNumber: null,
+      bankRoutingNumber: null,
+      bankSwiftCode: null,
+    });
+    expect(JSON.stringify(result)).not.toContain('1234567890');
+    expect(JSON.stringify(result)).not.toContain('TESTBDDH');
+  });
+
+  it('withholds them from an EDIT collaborator too', async () => {
+    prisma.accessGrant.findFirst.mockResolvedValue({ id: 'g2', permission: AccessPermission.EDIT });
+
+    const result = await service.findOneForViewer('grantee2', 'biz1');
+
+    expect(result.bankAccountNumber).toBeNull();
+  });
+
+  it('still rejects a stranger', async () => {
+    prisma.accessGrant.findFirst.mockResolvedValue(null);
+
+    await expect(service.findOneForViewer('stranger1', 'biz1')).rejects.toThrow(ForbiddenException);
+  });
+
+  it('does not change what assertAccess returns (the invoice PDF needs the decrypted numbers)', async () => {
+    prisma.accessGrant.findFirst.mockResolvedValue({ id: 'g1' });
+
+    const result = await service.assertAccess('grantee1', 'biz1', AccessPermission.VIEW);
+
+    expect(result.bankAccountNumber).toBe('1234567890');
+  });
+});
