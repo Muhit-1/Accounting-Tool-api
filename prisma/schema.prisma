@@ -30,6 +30,23 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+// An order's life: new -> confirmed -> shipped -> delivered, with cancel/return
+// as the ways out. Only DELIVERED orders are money; see order/order-status.ts.
+enum OrderStatus {
+  NEW
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+// What a delivered order does to its fund account.
+enum OrderPostingRule {
+  MONEY_IN
+  DEDUCT_FROM_FUND
+}
+
 enum StorageProvider {
   LOCAL
   DRIVE
@@ -55,11 +72,11 @@ model User {
   // Google refresh token, AES-256-GCM encrypted via EncryptionService (never plaintext).
   googleRefreshTokenEnc String?  @db.Text
   name                  String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
-  businesses    Business[]    @relation("BusinessOwner")
-  accessGrants  AccessGrant[] @relation("Grantee")
+  businesses   Business[]    @relation("BusinessOwner")
+  accessGrants AccessGrant[] @relation("Grantee")
 
   @@map("users")
 }
@@ -75,29 +92,32 @@ model Business {
   currency String @default("BDT")
 
   // Invoice sender profile (Section 4 of the invoice template mapping).
-  logoUrl        String? @db.Text // may hold a base64 data URI for an uploaded logo
-  address        String? @db.Text
-  contactEmail   String?
-  website        String?
+  logoUrl           String? @db.Text // may hold a base64 data URI for an uploaded logo
+  address           String? @db.Text
+  contactEmail      String?
+  website           String?
   bankAccountName   String?
   bankAccountNumber String?
   bankRoutingNumber String?
   bankSwiftCode     String?
   bankBranch        String?
   defaultTerms      String? @db.Text // default Terms & Conditions text, overridable per invoice
+  // Letters in front of order numbers ("SJ" -> SJ-0001). Null = initials of the name.
+  orderPrefix       String? @db.VarChar(10)
 
   driveFolderId String? // set once Stage 2 (Google Drive) is live
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  categories    Category[]
-  transactions  Transaction[]
-  accounts      Account[]
-  clients       Client[]
-  invoices      Invoice[]
-  documents     Document[]
-  accessGrants  AccessGrant[]
+  categories   Category[]
+  transactions Transaction[]
+  accounts     Account[]
+  clients      Client[]
+  invoices     Invoice[]
+  documents    Document[]
+  accessGrants AccessGrant[]
+  orders       Order[]
 
   @@map("businesses")
 }
@@ -115,6 +135,7 @@ model Account {
   updatedAt DateTime @updatedAt
 
   transactions Transaction[]
+  orders       Order[]
 
   @@map("accounts")
 }
@@ -159,13 +180,13 @@ model Category {
 // underneath it is a debit/credit pair of Lines, so full double-entry views
 // (Phase 3) don't require a schema rewrite.
 model Transaction {
-  id         String   @id @default(cuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  accountId  String
-  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  date       DateTime
-  memo       String?
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  accountId    String
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  date         DateTime
+  memo         String?
   // Who the money moved with — the vendor on a bill you paid (EXPENSE) or
   // the client who paid you (INCOME). Free text, usually prefilled from a
   // scanned/uploaded invoice (see InvoiceScanService.extractCounterparty).
@@ -175,8 +196,8 @@ model Transaction {
   // this entry via "Upload invoice" — kept so they can open it again later.
   // All three are set together or not at all.
   receiptFileReference String? // path on disk (Stage 1 local storage)
-  receiptFileName       String? // original filename, for a friendly download name
-  receiptMimeType       String?
+  receiptFileName      String? // original filename, for a friendly download name
+  receiptMimeType      String?
 
   // Link to an outside proof (payment screenshot, receipt). https only —
   // validated in the DTO; the web opens it with rel="noopener noreferrer".
@@ -187,6 +208,11 @@ model Transaction {
   // `amountInputs` (see common/calc.ts) and saves that, never the client's.
   amountType   String? @db.VarChar(20)
   amountInputs Json? // number[], the named boxes in order
+
+  // Set when this entry was posted by a delivered order. It is owned by the
+  // order: edited or removed only by changing the order (see OrderService).
+  orderId String? @unique
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
@@ -207,6 +233,43 @@ model Line {
   @@map("lines")
 }
 
+// A customer order. `total` is always worked out by the server
+// (subtotal + delivery - discount). A DELIVERED order owns one Transaction in
+// its fund account, created/updated/removed with the order's status.
+model Order {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  accountId  String // the fund account a delivered order posts into
+  account    Account  @relation(fields: [accountId], references: [id])
+
+  number Int // highest + 1 per business; shown as e.g. SJ-0001
+
+  orderDate       DateTime
+  customerName    String           @db.VarChar(120)
+  customerPhone   String?          @db.VarChar(30)
+  customerEmail   String?          @db.VarChar(254)
+  customerAddress String?          @db.Text
+  items           String?          @db.Text // free text, e.g. "Wooden puzzle x 1"
+  subtotal        Decimal          @db.Decimal(14, 2)
+  deliveryCharge  Decimal          @default(0) @db.Decimal(14, 2)
+  discount        Decimal          @default(0) @db.Decimal(14, 2)
+  total           Decimal          @db.Decimal(14, 2)
+  paymentMethod   String?          @db.VarChar(60)
+  status          OrderStatus      @default(NEW)
+  postingRule     OrderPostingRule @default(MONEY_IN)
+  deliveryDate    DateTime?
+  notes           String?          @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transaction Transaction?
+
+  @@unique([businessId, number])
+  @@map("orders")
+}
+
 // A generated invoice.
 model Invoice {
   id         String   @id @default(cuid())
@@ -215,7 +278,7 @@ model Invoice {
   clientId   String
   client     Client   @relation(fields: [clientId], references: [id])
 
-  number  String // sequential per business, e.g. shown as "#20260812"
+  number    String // sequential per business, e.g. shown as "#20260812"
   issueDate DateTime
   terms     String // e.g. "Due end of the month"
   dueDate   DateTime
@@ -250,10 +313,10 @@ model InvoiceItem {
 
 // Any stored file (invoice PDFs, receipts, etc.).
 model Document {
-  id         String          @id @default(cuid())
-  businessId String
-  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  type       String
+  id              String          @id @default(cuid())
+  businessId      String
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type            String
   storageProvider StorageProvider @default(LOCAL)
   fileReference   String
 

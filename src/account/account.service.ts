@@ -81,6 +81,13 @@ export class AccountService {
         `This account still has ${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}. Move or delete them before deleting the account.`,
       );
     }
+    // Orders post into an account; deleting it from under them would fail (or lose the orders).
+    const orderCount = await this.prisma.order.count({ where: { accountId: id } });
+    if (orderCount > 0) {
+      throw new ConflictException(
+        `This account is the fund of ${orderCount} ${orderCount === 1 ? 'order' : 'orders'}. Move or delete them before deleting the account.`,
+      );
+    }
     await this.prisma.account.delete({ where: { id } });
     return { id };
   }

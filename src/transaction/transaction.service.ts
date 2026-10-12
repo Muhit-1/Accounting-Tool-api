@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AccessPermission, CategoryType, LineDirection, Prisma } from '../generated/prisma/client.js';
@@ -39,6 +39,7 @@ function toResponse(tx: {
   counterparty: string | null;
   receiptFileName: string | null;
   proofUrl?: string | null;
+  orderId?: string | null;
   amountType?: string | null;
   amountInputs?: unknown;
   createdAt: Date;
@@ -53,6 +54,8 @@ function toResponse(tx: {
     counterparty: tx.counterparty,
     receiptFileName: tx.receiptFileName,
     proofUrl: tx.proofUrl ?? null,
+    // Set for an entry posted by a delivered order; it can only change through the order.
+    orderId: tx.orderId ?? null,
     // null = an entry made before amount types existed = a fixed amount.
     amountType: tx.amountType ?? null,
     amountInputs: readInputs(tx.amountInputs),
@@ -72,6 +75,15 @@ function calculate(amountType: string, amountInputs: unknown): number {
   } catch (err) {
     if (err instanceof CalcError) throw new BadRequestException(err.message);
     throw err;
+  }
+}
+
+// An entry posted by a delivered order is owned by that order (see
+// OrderService.syncFundEntry): editing or deleting it here would leave the
+// order and the books disagreeing, so the order has to be changed instead.
+function assertNotOrderEntry(tx: { orderId?: string | null }) {
+  if (tx.orderId) {
+    throw new ConflictException('This entry comes from an order. Change the order instead.');
   }
 }
 
@@ -198,6 +210,7 @@ export class TransactionService {
     if (existing.businessId !== businessId) {
       throw new ForbiddenException('This transaction does not belong to that business');
     }
+    assertNotOrderEntry(existing);
 
     // An edit form re-sends the date untouched; only a changed date is vetted,
     // so entries saved before this rule existed stay editable.
@@ -279,6 +292,7 @@ export class TransactionService {
   async remove(userId: string, businessId: string, id: string) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const tx = await this.findTransactionInBusiness(businessId, id);
+    assertNotOrderEntry(tx);
     if (tx.receiptFileReference) {
       await this.receiptStorage.remove(tx.receiptFileReference);
     }
@@ -298,6 +312,7 @@ export class TransactionService {
   ) {
     await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
     const tx = await this.findTransactionInBusiness(businessId, id);
+    assertNotOrderEntry(tx);
 
     if (!file) {
       throw new BadRequestException('No file uploaded');

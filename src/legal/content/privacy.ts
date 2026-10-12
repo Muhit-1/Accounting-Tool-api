@@ -33,6 +33,7 @@ export const privacyPolicy: LegalDocument = {
         'Account data: you sign in only with Google. From your Google account we receive and store your name, your email address (in lower case) and Google’s unique identifier for your account. We do not collect or store a password for you. Accounts created before Google sign-in was introduced may still hold a password hash from that time; it can no longer be used to sign in.',
         'Google connection data: the Google refresh token that lets Exin Finance reach your Google Drive, stored encrypted (see section 10).',
         'Business data you enter: the profile of each business (name, currency, address, contact email, website, logo, default invoice terms), your accounts and categories, ledger entries (date, amount, description and counterparty), clients (name, address, email), invoices with their line items, and the PDF files generated for them.',
+        'Customer orders: if you use the orders feature, the details you enter for each order: the customer’s name, phone number, email address and delivery address, the items, amounts, payment method, dates and notes. When an order is marked delivered, a ledger entry with the order total and the customer’s name is created from it.',
         'Bank details for invoices: account holder name and bank branch are stored as entered. The account number, routing number and SWIFT code are additionally encrypted at rest with AES-256-GCM.',
         'Uploaded files: invoices and receipts (PDF or image) that you attach to ledger entries or upload to have an amount, date and counterparty suggested. Text is read from the file on our own server (from the PDF text layer or by text recognition); the file is not sent to any other company for this.',
         'Sharing data: if you share a business with someone, we store whom you shared it with (matched by email address), what they may do (view or edit) and until when. People you share with can see the data of that business.',
@@ -63,7 +64,7 @@ export const privacyPolicy: LegalDocument = {
     {
       heading: '5. Data about your own customers',
       paragraphs: [
-        'Invoices and ledger entries usually contain data about other people, such as your clients. You decide what you enter and are responsible for having a lawful basis for it. Where the GDPR applies to you as a business, we process this content on your behalf and only to provide the service to you. If you need a data processing agreement, contact us at info@sam-trek.com.',
+        'Invoices, orders and ledger entries usually contain data about other people, such as your clients and customers. You decide what you enter and are responsible for having a lawful basis for it. Where the GDPR applies to you as a business, we process this content on your behalf and only to provide the service to you. If you need a data processing agreement, contact us at info@sam-trek.com.',
       ],
     },
     {

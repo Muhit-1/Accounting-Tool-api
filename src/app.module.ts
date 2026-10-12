@@ -17,6 +17,7 @@ import { ReportModule } from './report/report.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessGrantModule } from './access-grant/access-grant.module.js';
 import { LegalModule } from './legal/legal.module.js';
+import { OrderModule } from './order/order.module.js';
 import { RateLimitGuard } from './common/rate-limit.guard.js';
 
 @Module({
@@ -32,6 +33,7 @@ import { RateLimitGuard } from './common/rate-limit.guard.js';
     CategoryModule,
     AccountModule,
     TransactionModule,
+    OrderModule,
     ClientModule,
     InvoiceModule,
     InvoiceScanModule,

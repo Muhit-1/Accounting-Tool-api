@@ -91,6 +91,8 @@ export class BusinessService {
       where: { businessId: id, receiptFileReference: { not: null } },
       select: { receiptFileReference: true },
     });
+    // Orders RESTRICT-delete their account, which the business delete would cascade too.
+    await this.prisma.order.deleteMany({ where: { businessId: id } });
     await this.prisma.invoice.deleteMany({ where: { businessId: id } });
     await this.prisma.client.deleteMany({ where: { businessId: id } });
     await this.prisma.business.delete({ where: { id } });

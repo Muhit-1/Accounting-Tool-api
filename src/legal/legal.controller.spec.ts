@@ -33,8 +33,8 @@ describe('Legal endpoints (public)', () => {
     expect(res.body).toMatchObject({
       slug,
       title,
-      version: '1.1',
-      effectiveDate: '2026-10-10',
+      version: '1.2',
+      effectiveDate: '2026-10-13',
       language: 'en',
     });
     expect(Array.isArray(res.body.sections)).toBe(true);

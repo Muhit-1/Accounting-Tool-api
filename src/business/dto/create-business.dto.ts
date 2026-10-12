@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsOptional, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, IsUrl, Matches, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { IsLogoDataUri, MAX_LOGO_DATA_URI_LENGTH, NormalizeEmail } from '../../common/validators.js';
 
 export const SUPPORTED_CURRENCIES = ['BDT', 'EUR', 'USD', 'CNY'] as const;
@@ -64,4 +65,16 @@ export class CreateBusinessDto {
   @IsString()
   @MaxLength(5000)
   defaultTerms?: string;
+
+  // Letters in front of order numbers ("SJ" -> SJ-0001). Empty = initials of the name.
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim().toUpperCase();
+    return trimmed === '' ? null : trimmed;
+  })
+  @IsString()
+  @MaxLength(10)
+  @Matches(/^[A-Z0-9]+$/, { message: 'orderPrefix may only contain letters and digits' })
+  orderPrefix?: string | null;
 }

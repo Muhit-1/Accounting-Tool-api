@@ -98,6 +98,8 @@ invoice/        Invoice creation/editing, PDF rendering (pdf/), local disk
                 storage
 invoice-scan/   "Upload invoice" — extracts amount/date/counterparty from an
                 uploaded PDF or image to prefill a transaction
+order/          Customer orders (status flow, server-calculated total); a
+                delivered order posts its money to a fund account
 report/         Date-range reports, per business (+ optional account filter)
                 or combined across every owned business; on-screen JSON and
                 PDF export. Also the fund statement (money in/out by category
@@ -124,6 +126,7 @@ The account is modeled as double-entry-ready from day one (`Transaction` → `Li
 - **Client** — a saved Bill To record, reusable across a business's invoices
 - **Category** — income/expense grouping, per business; an optional `groupName` (e.g. "Overhead", max 60) is the heading it is listed under in pickers and the fund statement
 - **Transaction** / **Line** — an account entry, scoped to an `Account`; Phase 1 stores one Line per Transaction (a CREDIT for income, a DEBIT for expense). Also carries an optional free-text `counterparty` (who the money moved with) and, when created via "Upload invoice," a reference to the original uploaded file so it can be reopened later. Also an optional `proofUrl` (an `https://` link to a screenshot/receipt) and `amountType` / `amountInputs` (how the amount was entered — see the Transactions endpoints; null `amountType` = a plain fixed amount, which is every entry made before amount types existed)
+- **Order** — a customer order: `number` (highest + 1 per business, shown as `SJ-0001` with the business's `orderPrefix`), customer name/phone/email/address, free-text `items`, `subtotal` / `deliveryCharge` / `discount` and a server-calculated `total`, `paymentMethod`, `status` (`NEW` → `CONFIRMED` → `SHIPPED` → `DELIVERED`, or `CANCELLED` / `RETURNED`), `postingRule` (`MONEY_IN` or `DEDUCT_FROM_FUND`), `deliveryDate`, `notes`, and the fund `accountId` it posts into. While an order is `DELIVERED` it owns exactly one **Transaction** (`Transaction.orderId`, unique)
 - **Invoice** / **InvoiceItem** — a generated invoice and its line items; the invoice number and content are editable after creation
 - **Document** — any stored file reference (storage-provider aware: local now, Drive later)
 - **AccessGrant** — a sharing permission: business or table scope, view or edit, with an expiry and optional early revocation
@@ -246,6 +249,19 @@ The texts live in `src/legal/content/privacy.ts` and `terms.ts` (no database): u
 | GET | `/reports` | `from`, `to` | Combined report across every business you own, with a per-business breakdown. `combinedTotals` is a plain sum; use `byCurrency` / `mixedCurrencies` when businesses use different currencies (not converted) |
 | GET | `/reports/pdf` | same | Combined report as a downloadable PDF |
 
+### Orders (`/businesses/:businessId/orders`)
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| POST | `.../orders` | `{ accountId, orderDate, customerName, subtotal, deliveryCharge?, discount?, customerPhone?, customerEmail?, customerAddress?, items?, paymentMethod?, status?, postingRule?, deliveryDate?, notes? }` | `accountId` (the fund account) must belong to the business. **There is no `total` field — a client-sent one is refused**; the server saves `subtotal + deliveryCharge − discount` (whole cents) and refuses a discount bigger than that (`400`). The phone is tidied (`1712345678` and `+880 1712-345678` → `01712345678`; anything not clearly a Bangladesh mobile is kept as typed). `status` defaults to `NEW` |
+| GET | `.../orders` | — | `{ summary, orders }`, newest first. `summary` = `{ orders, inProgress, delivered, deliveredValue, discountsOnDelivered }`; the two money figures count delivered `MONEY_IN` orders only (an order paid out of the fund is a cost, not a sale). Each order carries `displayNumber` and `transactionId` (its fund entry, while delivered) |
+| GET | `.../orders/:id` | — | |
+| PATCH | `.../orders/:id` | any subset of the create fields except `status` | Recalculates the total from the stored figures. A `DELIVERED` order's fund entry (amount, direction, account, date) is updated in the same step; a `CANCELLED` / `RETURNED` order is closed (`409`) |
+| PATCH | `.../orders/:id/status` | `{ status, deliveryDate? }` | Allowed moves: `NEW` → `CONFIRMED`/`CANCELLED`; `CONFIRMED` → `SHIPPED`/`CANCELLED`; `SHIPPED` → `DELIVERED`/`CANCELLED`; `DELIVERED` → `SHIPPED`/`RETURNED`; `CANCELLED` and `RETURNED` are final (`400` otherwise). **Entering `DELIVERED` creates the fund entry** (`INCOME` for `MONEY_IN`, `EXPENSE` for `DEDUCT_FROM_FUND`; memo `Order SJ-0001`, counterparty the customer, dated by `deliveryDate` or else the order date, filed under the auto-created categories `Orders (delivered)` / `Orders paid from fund`); **leaving it deletes the entry**. Order change and entry change are one database transaction. A delivered order needs a total above 0 |
+| DELETE | `.../orders/:id` | — | `409` while `DELIVERED` — move it back to shipped (or returned) first |
+
+An entry posted by an order shows `orderId` in the transaction list and cannot be edited, deleted or given a receipt through the transactions endpoints (`409`, "Change the order instead"). An account that is the fund of any order cannot be deleted. `Business.orderPrefix` (letters/digits, max 10, upper-cased; empty = initials of the business name) is set with the business profile.
+
 ### Fund statement and monthly view (`/businesses/:businessId/...`) — VIEW access is enough
 
 | Method | Path | Query | Notes |
@@ -297,7 +313,7 @@ The `Dockerfile` builds a multi-stage image (`node:24-bookworm-slim`, Debian/gli
 npm run test
 ```
 
-Unit tests currently cover the security- and correctness-critical logic: `BusinessService.assertAccess` (owner vs. collaborator vs. stranger, VIEW vs. EDIT, expiry/revocation), `AuthService` (password hashing, login failure modes), the Google login flow (state/cookie checks, account linking, scope and refresh-token handling, 503 without config, password routes disabled by default), `TransactionService` (income/expense → debit/credit mapping, running balance, amount types computed on the server, proof link), the amount calculator (`common/calc.ts`, one shared table of cases also run by the web app), the DTO rules for `proofUrl` / `amountInputs` / `groupName` / the monthly query, the fund statement (grouping, exact totals, access and account checks), the monthly view (month boundaries under several process timezones, closing balance, outside-range check), and `AccessGrantService` (grant validation edge cases). Every endpoint has also been exercised manually end-to-end against a real local database during development (registration through invoice PDF generation, sharing, and dashboards).
+Unit tests currently cover the security- and correctness-critical logic: `BusinessService.assertAccess` (owner vs. collaborator vs. stranger, VIEW vs. EDIT, expiry/revocation), `AuthService` (password hashing, login failure modes), the Google login flow (state/cookie checks, account linking, scope and refresh-token handling, 503 without config, password routes disabled by default), `TransactionService` (income/expense → debit/credit mapping, running balance, amount types computed on the server, proof link), the amount calculator (`common/calc.ts`, one shared table of cases also run by the web app), the DTO rules for `proofUrl` / `amountInputs` / `groupName` / the monthly query, the fund statement (grouping, exact totals, access and account checks), the monthly view (month boundaries under several process timezones, closing balance, outside-range check), the orders module (an in-memory fake database: numbering, server-calculated totals, status table, posting and removing the fund entry, edits of a delivered order, all-or-nothing rollback, access), order DTOs, phone tidying, and `AccessGrantService` (grant validation edge cases). Every endpoint has also been exercised manually end-to-end against a real local database during development (registration through invoice PDF generation, sharing, and dashboards).
 
 There's no seed script yet — set `AUTH_PASSWORD_ENABLED=true` and create a user via `POST /auth/register` to get started locally without Google credentials.
 
