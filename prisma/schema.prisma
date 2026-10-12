@@ -144,6 +144,9 @@ model Category {
   business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   name       String
   type       CategoryType
+  // Optional heading the category is listed under (e.g. "Overhead"); entries
+  // without one show under "Other". Plain text, not a separate table.
+  groupName  String?      @db.VarChar(60)
 
   createdAt DateTime @default(now())
 
@@ -174,6 +177,16 @@ model Transaction {
   receiptFileReference String? // path on disk (Stage 1 local storage)
   receiptFileName       String? // original filename, for a friendly download name
   receiptMimeType       String?
+
+  // Link to an outside proof (payment screenshot, receipt). https only —
+  // validated in the DTO; the web opens it with rel="noopener noreferrer".
+  proofUrl String? @db.Text
+
+  // How the amount was entered. Null = FIXED (every entry made before this
+  // existed). For the other types the server recomputes the amount from
+  // `amountInputs` (see common/calc.ts) and saves that, never the client's.
+  amountType   String? @db.VarChar(20)
+  amountInputs Json? // number[], the named boxes in order
 
   createdAt DateTime @default(now())
 

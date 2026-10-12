@@ -1,13 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { AccessPermission, CategoryType, LineDirection } from '../generated/prisma/client.js';
+import { AccessPermission, CategoryType, LineDirection, Prisma } from '../generated/prisma/client.js';
 import { CreateTransactionDto } from './dto/create-transaction.dto.js';
 import { UpdateTransactionDto } from './dto/update-transaction.dto.js';
 import { ReceiptStorageService } from './receipt-storage.service.js';
 import { matchesFileSignature } from '../common/file-signature.js';
 import { addMoney, subMoney } from '../common/money.js';
 import { assertPlausibleEntryDate } from '../common/entry-date.js';
+import { CalcError, computeAmount } from '../common/calc.js';
 
 const ALLOWED_RECEIPT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
@@ -24,6 +25,12 @@ function typeForDirection(direction: LineDirection): CategoryType {
   return direction === LineDirection.CREDIT ? CategoryType.INCOME : CategoryType.EXPENSE;
 }
 
+// amountInputs is a Json column; anything that is not a plain list of numbers
+// (it never should be) reads as "no inputs" rather than breaking the list.
+function readInputs(value: unknown): number[] | null {
+  return Array.isArray(value) && value.every((v) => typeof v === 'number') ? (value as number[]) : null;
+}
+
 function toResponse(tx: {
   id: string;
   accountId: string;
@@ -31,6 +38,9 @@ function toResponse(tx: {
   memo: string | null;
   counterparty: string | null;
   receiptFileName: string | null;
+  proofUrl?: string | null;
+  amountType?: string | null;
+  amountInputs?: unknown;
   createdAt: Date;
   lines: { amount: unknown; direction: LineDirection; categoryId: string | null; category: { id: string; name: string } | null }[];
 }) {
@@ -42,11 +52,27 @@ function toResponse(tx: {
     memo: tx.memo,
     counterparty: tx.counterparty,
     receiptFileName: tx.receiptFileName,
+    proofUrl: tx.proofUrl ?? null,
+    // null = an entry made before amount types existed = a fixed amount.
+    amountType: tx.amountType ?? null,
+    amountInputs: readInputs(tx.amountInputs),
     amount: line ? Number(line.amount) : 0,
     type: line ? typeForDirection(line.direction) : null,
     category: line?.category ?? null,
     createdAt: tx.createdAt,
   };
+}
+
+// The server, not the client, decides the saved amount for every type but
+// FIXED: it recomputes from the named boxes (common/calc.ts) so a tampered or
+// stale preview can never be stored.
+function calculate(amountType: string, amountInputs: unknown): number {
+  try {
+    return computeAmount(amountType, amountInputs);
+  } catch (err) {
+    if (err instanceof CalcError) throw new BadRequestException(err.message);
+    throw err;
+  }
 }
 
 @Injectable()
@@ -95,6 +121,12 @@ export class TransactionService {
       await this.assertCategoryBelongsToBusiness(businessId, dto.categoryId, dto.type);
     }
 
+    const calculated = dto.amountType && dto.amountType !== 'FIXED';
+    if (!calculated && dto.amount === undefined) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+    const amount = calculated ? calculate(dto.amountType as string, dto.amountInputs) : (dto.amount as number);
+
     const tx = await this.prisma.transaction.create({
       data: {
         businessId,
@@ -102,9 +134,12 @@ export class TransactionService {
         date,
         memo: dto.memo,
         counterparty: dto.counterparty,
+        proofUrl: dto.proofUrl,
+        amountType: calculated ? dto.amountType : undefined,
+        amountInputs: calculated ? dto.amountInputs : undefined,
         lines: {
           create: {
-            amount: dto.amount,
+            amount,
             direction: directionForType(dto.type),
             categoryId: dto.categoryId,
           },
@@ -182,6 +217,7 @@ export class TransactionService {
     if (dto.accountId) {
       await this.assertAccountBelongsToBusiness(businessId, dto.accountId);
     }
+    const amountChange = this.resolveAmountChange(dto, existing.amountType);
 
     const tx = await this.prisma.transaction.update({
       where: { id },
@@ -190,11 +226,14 @@ export class TransactionService {
         date,
         memo: dto.memo,
         counterparty: dto.counterparty,
+        proofUrl: dto.proofUrl,
+        amountType: amountChange.amountType,
+        amountInputs: amountChange.amountInputs,
         lines: {
           update: {
             where: { id: line.id },
             data: {
-              amount: dto.amount,
+              amount: amountChange.amount,
               direction: dto.type ? directionForType(dto.type) : undefined,
               categoryId,
             },
@@ -205,6 +244,36 @@ export class TransactionService {
     });
 
     return toResponse(tx);
+  }
+
+  // What an edit does to the amount columns. Rules:
+  //  - a calculated type (with its boxes) -> the server recomputes and saves that;
+  //  - FIXED -> back to a plain amount: type and boxes are cleared;
+  //  - only `amount` sent for an entry that was calculated -> it is now a
+  //    typed-in number, so the stale boxes are cleared too (they would no
+  //    longer reproduce the amount);
+  //  - nothing about the amount sent -> left exactly as is.
+  private resolveAmountChange(
+    dto: UpdateTransactionDto,
+    existingType: string | null,
+  ): { amount?: number; amountType?: string | null; amountInputs?: number[] | typeof Prisma.DbNull } {
+    const requested = dto.amountType;
+    if (requested && requested !== 'FIXED') {
+      return { amount: calculate(requested, dto.amountInputs), amountType: requested, amountInputs: dto.amountInputs };
+    }
+    if (requested === 'FIXED') {
+      return { amount: dto.amount, amountType: null, amountInputs: Prisma.DbNull };
+    }
+    if (dto.amountInputs !== undefined) {
+      if (!existingType || existingType === 'FIXED') {
+        throw new BadRequestException('Choose an amount type for those numbers');
+      }
+      return { amount: calculate(existingType, dto.amountInputs), amountInputs: dto.amountInputs };
+    }
+    if (dto.amount !== undefined && existingType) {
+      return { amount: dto.amount, amountType: null, amountInputs: Prisma.DbNull };
+    }
+    return { amount: dto.amount };
   }
 
   async remove(userId: string, businessId: string, id: string) {
