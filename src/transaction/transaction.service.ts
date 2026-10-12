@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessService } from '../business/business.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,6 +10,10 @@ import { matchesFileSignature } from '../common/file-signature.js';
 import { addMoney, subMoney } from '../common/money.js';
 import { assertPlausibleEntryDate } from '../common/entry-date.js';
 import { CalcError, computeAmount } from '../common/calc.js';
+import { isSafeId } from '../common/safe-id.js';
+import { validateBulkRow, type RowError } from '../common/bulk-rows.js';
+import { categoryResponse } from '../category/category.service.js';
+import { BulkTransactionRowDto, type BulkCreateTransactionsDto } from './dto/bulk-transactions.dto.js';
 
 const ALLOWED_RECEIPT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
@@ -43,7 +48,12 @@ function toResponse(tx: {
   amountType?: string | null;
   amountInputs?: unknown;
   createdAt: Date;
-  lines: { amount: unknown; direction: LineDirection; categoryId: string | null; category: { id: string; name: string } | null }[];
+  lines: {
+    amount: unknown;
+    direction: LineDirection;
+    categoryId: string | null;
+    category: { id: string; name: string; systemKey?: string | null } | null;
+  }[];
 }) {
   const line = tx.lines[0];
   return {
@@ -61,7 +71,7 @@ function toResponse(tx: {
     amountInputs: readInputs(tx.amountInputs),
     amount: line ? Number(line.amount) : 0,
     type: line ? typeForDirection(line.direction) : null,
-    category: line?.category ?? null,
+    category: line?.category ? categoryResponse(line.category) : null,
     createdAt: tx.createdAt,
   };
 }
@@ -352,6 +362,167 @@ export class TransactionService {
     }
     const buffer = await this.receiptStorage.read(tx.receiptFileReference);
     return { buffer, filename: tx.receiptFileName, mimeType: tx.receiptMimeType };
+  }
+
+  // Adds many entries at once (paste from Excel, file import). All or nothing:
+  // every row is checked first and, when any row has a problem, nothing is
+  // created and each problem comes back with its row number. The amount of a
+  // calculated row is recomputed here, like for a single entry.
+  async bulkCreate(userId: string, businessId: string, accountId: string, dto: BulkCreateTransactionsDto) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    await this.assertAccountBelongsToBusiness(businessId, accountId);
+
+    const categories = await this.prisma.category.findMany({
+      where: { businessId },
+      select: { id: true, name: true, type: true },
+    });
+    const categoryById = new Map(categories.map((category) => [category.id, category]));
+
+    interface Prepared {
+      date: Date;
+      memo?: string;
+      counterparty?: string;
+      proofUrl?: string | null;
+      amount: number;
+      type: CategoryType;
+      categoryId?: string;
+      amountType?: string;
+      amountInputs?: number[];
+    }
+    const errors: RowError[] = [];
+    const prepared: Prepared[] = [];
+
+    for (const [index, raw] of dto.rows.entries()) {
+      const checked = await validateBulkRow(BulkTransactionRowDto, raw, index);
+      if ('errors' in checked) {
+        errors.push(...checked.errors);
+        continue;
+      }
+      const row = checked.row;
+      const before = errors.length;
+
+      let date: Date | undefined;
+      try {
+        date = assertPlausibleEntryDate(row.date);
+      } catch (err) {
+        errors.push({ index, field: 'date', message: err instanceof Error ? err.message : 'is not valid' });
+      }
+
+      if (row.categoryId) {
+        const category = categoryById.get(row.categoryId);
+        if (!category) {
+          errors.push({ index, field: 'categoryId', message: 'Category does not belong to this business' });
+        } else if (category.type !== row.type) {
+          errors.push({
+            index,
+            field: 'categoryId',
+            message: `Category "${category.name}" is a ${category.type} category and can't be used on a ${row.type} entry`,
+          });
+        }
+      }
+
+      const calculated = Boolean(row.amountType && row.amountType !== 'FIXED');
+      let amount = row.amount;
+      if (calculated) {
+        try {
+          amount = computeAmount(row.amountType as string, row.amountInputs);
+        } catch (err) {
+          if (!(err instanceof CalcError)) throw err;
+          errors.push({ index, field: 'amount', message: err.message });
+        }
+      } else if (amount === undefined) {
+        errors.push({ index, field: 'amount', message: 'amount must be a positive number' });
+      }
+
+      if (errors.length === before && date && amount !== undefined) {
+        prepared.push({
+          date,
+          memo: row.memo,
+          counterparty: row.counterparty,
+          proofUrl: row.proofUrl,
+          amount,
+          type: row.type,
+          categoryId: row.categoryId,
+          amountType: calculated ? row.amountType : undefined,
+          amountInputs: calculated ? row.amountInputs : undefined,
+        });
+      }
+    }
+
+    if (errors.length > 0) {
+      const badRows = new Set(errors.map((error) => error.index)).size;
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `${badRows} of ${dto.rows.length} rows have a problem. Nothing was added.`,
+        errors,
+      });
+    }
+
+    const importBatchId = dto.importBatchId ?? randomUUID();
+    // createdAt is the tie-break after the date, so each row gets its own
+    // millisecond: the entries keep the order they were pasted in.
+    const base = Date.now();
+    const rows = prepared.map((row, i) => ({ id: randomUUID(), createdAt: new Date(base + i), ...row }));
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const row of rows) {
+      if (row.type === CategoryType.INCOME) totalIn = addMoney(totalIn, row.amount);
+      else totalOut = addMoney(totalOut, row.amount);
+    }
+
+    await this.prisma.$transaction(
+      async (db) => {
+        await db.transaction.createMany({
+          data: rows.map((row) => ({
+            id: row.id,
+            businessId,
+            accountId,
+            date: row.date,
+            memo: row.memo,
+            counterparty: row.counterparty,
+            proofUrl: row.proofUrl,
+            amountType: row.amountType,
+            amountInputs: row.amountInputs,
+            importBatchId,
+            createdAt: row.createdAt,
+          })),
+        });
+        await db.line.createMany({
+          data: rows.map((row) => ({
+            transactionId: row.id,
+            amount: row.amount,
+            direction: directionForType(row.type),
+            categoryId: row.categoryId,
+          })),
+        });
+      },
+      // 1000 rows is two statements, but give a slow remote database room anyway.
+      { timeout: 60_000, maxWait: 10_000 },
+    );
+
+    return { importBatchId, created: rows.length, totalIn, totalOut };
+  }
+
+  // "Undo" for a paste or import: removes the entries of one batch. Entries
+  // owned by an order are never touched, even if one somehow carried the id.
+  async removeBatch(userId: string, businessId: string, accountId: string, importBatchId: string) {
+    await this.businessService.assertAccess(userId, businessId, AccessPermission.EDIT);
+    await this.assertAccountBelongsToBusiness(businessId, accountId);
+    if (!isSafeId(importBatchId)) {
+      throw new BadRequestException('That import id is not valid');
+    }
+    const batch = await this.prisma.transaction.findMany({
+      where: { businessId, accountId, importBatchId, orderId: null },
+      select: { id: true, receiptFileReference: true },
+    });
+    for (const tx of batch) {
+      if (tx.receiptFileReference) await this.receiptStorage.remove(tx.receiptFileReference);
+    }
+    if (batch.length > 0) {
+      await this.prisma.transaction.deleteMany({ where: { id: { in: batch.map((tx) => tx.id) } } });
+    }
+    return { deleted: batch.length };
   }
 
   async getBalance(userId: string, businessId: string) {

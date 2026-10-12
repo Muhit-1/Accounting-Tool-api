@@ -168,6 +168,9 @@ model Category {
   // Optional heading the category is listed under (e.g. "Overhead"); entries
   // without one show under "Other". Plain text, not a separate table.
   groupName  String?      @db.VarChar(60)
+  // Set on categories the system files entries under by itself ("Orders (auto)",
+  // "Costs (auto)", ...). Locked: they cannot be renamed or deleted by hand.
+  systemKey  String?      @db.VarChar(30)
 
   createdAt DateTime @default(now())
 
@@ -214,10 +217,15 @@ model Transaction {
   orderId String? @unique
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
+  // Rows added together by one paste or import share this id, so "Undo" can
+  // remove exactly that batch. Null for entries typed one by one.
+  importBatchId String? @db.VarChar(64)
+
   createdAt DateTime @default(now())
 
   lines Line[]
 
+  @@index([businessId, importBatchId])
   @@map("transactions")
 }
 

@@ -19,8 +19,11 @@ import { canTransition, isDeletable, isFinal, isInProgress } from './order-statu
 import { formatOrderNumber } from './order-number.js';
 
 // Categories the posted fund entries are filed under; created on first use.
-export const ORDER_INCOME_CATEGORY = 'Orders (delivered)';
+// They carry a systemKey, so they are locked ("Posted automatically").
+export const ORDER_INCOME_CATEGORY = 'Orders (auto)';
 export const ORDER_EXPENSE_CATEGORY = 'Orders paid from fund';
+const ORDER_INCOME_KEY = 'ORDERS_IN';
+const ORDER_EXPENSE_KEY = 'ORDERS_OUT';
 
 interface OrderRow {
   id: string;
@@ -138,10 +141,18 @@ export class OrderService {
   }
 
   private async ensureCategory(db: Prisma.TransactionClient, businessId: string, type: CategoryType): Promise<string> {
-    const name = type === CategoryType.INCOME ? ORDER_INCOME_CATEGORY : ORDER_EXPENSE_CATEGORY;
-    const found = await db.category.findFirst({ where: { businessId, name, type } });
-    if (found) return found.id;
-    return (await db.category.create({ data: { businessId, name, type } })).id;
+    const income = type === CategoryType.INCOME;
+    const name = income ? ORDER_INCOME_CATEGORY : ORDER_EXPENSE_CATEGORY;
+    const systemKey = income ? ORDER_INCOME_KEY : ORDER_EXPENSE_KEY;
+    const found =
+      (await db.category.findFirst({ where: { businessId, type, systemKey } })) ??
+      (await db.category.findFirst({ where: { businessId, type, name } }));
+    if (found) {
+      // A category the owner made by hand with the same name becomes the system one.
+      if (!found.systemKey) await db.category.update({ where: { id: found.id }, data: { systemKey } });
+      return found.id;
+    }
+    return (await db.category.create({ data: { businessId, name, type, systemKey } })).id;
   }
 
   // Keeps the order's fund entry true to its state, inside the same database

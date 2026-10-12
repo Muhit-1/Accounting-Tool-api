@@ -81,7 +81,18 @@ function createFakeDb() {
     },
     category: {
       findFirst: async ({ where }: Row) =>
-        state.categories.find((c) => c.businessId === where.businessId && c.name === where.name && c.type === where.type) ?? null,
+        state.categories.find(
+          (c) =>
+            c.businessId === where.businessId &&
+            c.type === where.type &&
+            (where.name === undefined || c.name === where.name) &&
+            (where.systemKey === undefined || c.systemKey === where.systemKey),
+        ) ?? null,
+      update: async ({ where, data }: Row) => {
+        const row = state.categories.find((c) => c.id === where.id);
+        Object.assign(row, data);
+        return { ...row };
+      },
       create: async ({ data }: Row) => {
         const row = { id: nextId('cat'), ...data };
         state.categories.push(row);
@@ -234,6 +245,7 @@ describe('OrderService.updateStatus (fund entry follows the status)', () => {
     expect(state.categories.find((c) => c.id === tx.lines[0].categoryId)).toMatchObject({
       name: ORDER_INCOME_CATEGORY,
       type: CategoryType.INCOME,
+      systemKey: 'ORDERS_IN',
     });
     expect(delivered.transactionId).toBe(tx.id);
   });
@@ -249,6 +261,14 @@ describe('OrderService.updateStatus (fund entry follows the status)', () => {
     await service.updateStatus('user1', 'biz1', order.id, { status: OrderStatus.DELIVERED });
     expect(state.transactions[0].lines[0]).toMatchObject({ amount: 900, direction: LineDirection.DEBIT });
     expect(state.categories[0]).toMatchObject({ name: ORDER_EXPENSE_CATEGORY, type: CategoryType.EXPENSE });
+  });
+
+  it('a hand-made category with the same name is adopted as the system one, not duplicated', async () => {
+    const { service, state, order } = await shippedOrder();
+    state.categories.push({ id: 'mine', businessId: 'biz1', name: ORDER_INCOME_CATEGORY, type: CategoryType.INCOME, systemKey: null });
+    await service.updateStatus('user1', 'biz1', order.id, { status: OrderStatus.DELIVERED });
+    expect(state.categories).toHaveLength(1);
+    expect(state.categories[0]).toMatchObject({ id: 'mine', systemKey: 'ORDERS_IN' });
   });
 
   it('moving back out of delivered takes the entry away again', async () => {
