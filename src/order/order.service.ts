@@ -21,7 +21,7 @@ import { formatOrderNumber } from './order-number.js';
 // Categories the posted fund entries are filed under; created on first use.
 // They carry a systemKey, so they are locked ("Posted automatically").
 export const ORDER_INCOME_CATEGORY = 'Orders (auto)';
-export const ORDER_EXPENSE_CATEGORY = 'Orders paid from fund';
+export const ORDER_EXPENSE_CATEGORY = 'Orders paid from fund (auto)';
 const ORDER_INCOME_KEY = 'ORDERS_IN';
 const ORDER_EXPENSE_KEY = 'ORDERS_OUT';
 
